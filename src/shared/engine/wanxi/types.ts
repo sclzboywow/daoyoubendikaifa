@@ -116,6 +116,8 @@ export interface WanxiNpcDefinition {
   identity: string;
   description: string;
   sigil: string;
+  /** Optional scene-neutral portrait asset key for future dialogue presentation. */
+  portraitAssetKey?: string;
   defaultGreeting: string;
   conversationKey: string;
   tags?: readonly string[];

@@ -3,10 +3,12 @@ import { InkButton } from '@app/components/ui/InkButton';
 import { InkDetailDrawer } from '@app/components/ui/InkDetailDrawer';
 import { InkTag } from '@app/components/ui/InkTag';
 import type { WanxiLampChatRoleKey } from '@shared/contracts/wanxiStory';
+import { useMemo } from 'react';
 import {
   getWanxiEnabledBindings,
   getWanxiLocation,
   getWanxiRegion,
+  type WanxiContinuitySnapshot,
   type WanxiLampStorySnapshot,
   type WanxiLocationDefinition,
   type WanxiNpcDefinition,
@@ -24,6 +26,7 @@ export interface WanxiNpcDetailDrawerProps {
   placement?: WanxiNpcPlacement | null;
   enabledActivityBindingIds: readonly string[];
   story?: WanxiLampStorySnapshot | null;
+  continuity?: WanxiContinuitySnapshot | null;
   busy?: boolean;
   onClose(): void;
   onActivitySelect?(bindingId: string): void;
@@ -38,43 +41,75 @@ export function WanxiNpcDetailDrawer({
   placement,
   enabledActivityBindingIds,
   story,
+  continuity,
   busy = false,
   onClose,
   onActivitySelect,
 }: WanxiNpcDetailDrawerProps) {
   const location = placement?.locationId ? getWanxiLocation(placement.locationId) : null;
   const region = placement ? getWanxiRegion(placement.regionId) : null;
-  const options = getWanxiEnabledBindings({
+  const storyOptions = getWanxiEnabledBindings({
     npcId: npc.id,
     locationId: placement?.locationId,
     enabledIds: enabledActivityBindingIds,
   }).map((binding) => ({ id: binding.id, label: binding.label, tone: 'primary' as const }));
+  const dailyOptions = (continuity?.dailyEvents ?? [])
+    .filter((event) => !event.completed && event.roleKey === npc.roleKey)
+    .map((event) => ({
+      id: event.id,
+      label: `今日见闻 · ${event.promptLabel}`,
+      tone: 'primary' as const,
+    }));
+  const options = [...storyOptions, ...dailyOptions];
+  const relationship = continuity?.relationships.find(
+    (candidate) => candidate.roleKey === npc.roleKey,
+  );
 
   const narrative = useWanxiLampNarrative({ story, target: { type: 'npc', roleKey: npc.roleKey } });
   const hasStoryNarrative = Boolean(narrative.messages);
-  const playback = useNarrativePlayback({ playbackKey: narrative.key, messages: narrative.messages, enabled: hasStoryNarrative && !narrative.loading });
+  const greetingBody =
+    story?.completed && npc.roleKey === 'stage_musician'
+      ? '今天只是练琴。你若不赶时间，坐一会儿也无妨。'
+      : story?.completed && npc.roleKey === 'mechanist'
+        ? '那盏新灯还在改。不急，这一次本来就不用赶。'
+        : npc.defaultGreeting;
+  const greetingMessages = useMemo(
+    () => [
+      {
+        id: `${npc.id}:greeting`,
+        speaker: npc.name,
+        body: greetingBody,
+        pauseAfterMs: 280,
+      },
+    ],
+    [greetingBody, npc.id, npc.name],
+  );
+  const playbackMessages = narrative.messages ?? greetingMessages;
+  const playbackKey = hasStoryNarrative
+    ? narrative.key
+    : `wanxi:npc-greeting:${npc.id}:${story?.completed ? 'completed' : 'default'}`;
+  const playback = useNarrativePlayback({
+    playbackKey,
+    messages: playbackMessages,
+    enabled: !narrative.loading,
+  });
   const canFreeChat = Boolean(story?.completed && (npc.roleKey === 'stage_musician' || npc.roleKey === 'mechanist'));
   const chat = useWanxiNpcChat({ roleKey: resolveChatRole(npc), npcName: npc.name, enabled: canFreeChat });
 
   const baseMessages = narrative.loading
     ? [{ id: `${narrative.key}:loading`, speaker: npc.name, body: '', gesture: '他似乎正在斟酌这一刻该如何开口。' }]
-    : hasStoryNarrative
-      ? playback.visibleMessages.map((message) => ({ id: message.id, speaker: message.speaker, body: message.body, tone: message.tone, gesture: message.gesture }))
-      : [{
-          id: `${npc.id}:greeting`,
-          speaker: npc.name,
-          body:
-            story?.completed && npc.roleKey === 'stage_musician'
-              ? '今天只是练琴。你若不赶时间，坐一会儿也无妨。'
-              : story?.completed && npc.roleKey === 'mechanist'
-                ? '那盏新灯还在改。不急，这一次本来就不用赶。'
-                : npc.defaultGreeting,
-        }];
+    : playback.visibleMessages.map((message) => ({
+        id: message.id,
+        speaker: message.speaker,
+        body: message.body,
+        tone: message.tone,
+        gesture: message.gesture,
+      }));
   const messages = [
     ...baseMessages,
     ...chat.messages.map((message) => ({ id: message.id, speaker: message.speaker, body: message.body, align: message.align })),
   ];
-  const narrativeReady = !hasStoryNarrative || playback.complete;
+  const narrativeReady = playback.complete;
   const visibleOptions = narrativeReady && !narrative.loading ? options : [];
 
   return (
@@ -86,6 +121,7 @@ export function WanxiNpcDetailDrawer({
             <div className="space-y-1">
               {region ? <p className="text-ink-secondary text-xs leading-5">所在：<span className="text-ink">{region.name}{location && location.name !== region.name ? ` · ${location.name}` : ''}</span></p> : null}
               {story && !story.completed ? <p className="text-crimson/80 text-xs leading-5">灯火未迟 · {story.objective}</p> : story?.completed && canFreeChat ? <p className="text-ink-secondary text-xs leading-5">《灯火未迟》之后，你们已经有些真正说得上话的旧交情了。</p> : null}
+              {relationship ? <p className="text-ink-secondary text-xs leading-5">关系：<span className="text-crimson">{relationship.stageLabel}</span>{relationship.memoryNotes.length > 0 ? ` · 共同记忆 ${relationship.memoryNotes.length}` : ''}</p> : null}
             </div>
           }
           messages={messages}

@@ -9,6 +9,11 @@ import { streamSseEvents } from '@server/lib/hono/streaming';
 import type { AppEnv } from '@server/lib/hono/types';
 import { toPlayerStateMutationResponse } from '@server/lib/services/ResourceMutationResponse';
 import {
+  completeWanxiDailyEventAndRemember,
+  getWanxiContinuitySnapshot,
+} from '@server/lib/services/wanxi/WanxiContinuityService';
+import { getWanxiDailyEventNarrative } from '@server/lib/services/wanxi/WanxiDailyNarrativeService';
+import {
   executeWanxiLampStoryAction,
   executeWanxiLampStoryBattle,
   getWanxiLampStorySnapshot,
@@ -19,6 +24,10 @@ import {
   prepareWanxiLampNpcChat,
 } from '@server/lib/services/wanxi/WanxiNarrativeService';
 import { resolveWanxiSceneRuntimeSnapshot } from '@server/lib/services/wanxi/WanxiSceneService';
+import {
+  WanxiDailyEventRequestSchema,
+  type WanxiDailyEventRequest,
+} from '@shared/contracts/wanxiContinuity';
 import {
   WanxiLampChatRoleSchema,
   WanxiLampNarrativeRequestSchema,
@@ -65,6 +74,61 @@ router.get('/scene', async (c) => {
     return errorResponse(c, error);
   }
 });
+
+router.get('/continuity', async (c) => {
+  try {
+    const active = actor(c);
+    return c.json({
+      success: true,
+      data: await getWanxiContinuitySnapshot(active.cultivatorId),
+    });
+  } catch (error) {
+    return errorResponse(c, error);
+  }
+});
+
+router.post(
+  '/continuity/event/narrative',
+  validateJson(WanxiDailyEventRequestSchema),
+  async (c) => {
+    try {
+      const active = actor(c);
+      const input = getValidatedJson<WanxiDailyEventRequest>(c);
+      return c.json({
+        success: true,
+        data: await getWanxiDailyEventNarrative({
+          cultivatorId: active.cultivatorId,
+          eventId: input.eventId,
+        }),
+      });
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
+
+router.post(
+  '/continuity/event/complete',
+  validateJson(WanxiDailyEventRequestSchema),
+  async (c) => {
+    try {
+      const active = actor(c);
+      const input = getValidatedJson<WanxiDailyEventRequest>(c);
+      const committed = await completeWanxiDailyEventAndRemember({
+        userId: active.userId,
+        cultivatorId: active.cultivatorId,
+        eventId: input.eventId,
+      });
+      const response = toPlayerStateMutationResponse(committed);
+      return c.json({
+        success: true,
+        data: response.data.continuity,
+      });
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
 
 router.get('/story/lamp', async (c) => {
   try {

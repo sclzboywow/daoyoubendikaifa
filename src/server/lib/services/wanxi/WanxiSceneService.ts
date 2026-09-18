@@ -2,30 +2,32 @@ import {
   getWanxiLampStoryActiveBindingIds,
   getWanxiLampStoryAttentionTarget,
   getWanxiLampStoryNpcPlacements,
+  getWanxiNpcByRoleKey,
   WANXI_DEFAULT_NPC_PLACEMENTS,
   WANXI_LOCATION_PLACEMENTS,
   WANXI_MAIN_SCENE,
   type WanxiNpcPlacement,
   type WanxiSceneRuntimeSnapshot,
 } from '@shared/engine/wanxi';
+import { getWanxiContinuitySnapshot } from './WanxiContinuityService';
 import { getWanxiLampStorySnapshot } from './WanxiLampStoryService';
 
 function mergeNpcPlacements(
   baseline: readonly WanxiNpcPlacement[],
   storyPlacements: readonly WanxiNpcPlacement[],
-  attentionNpcId?: string,
+  attentionNpcIds: ReadonlySet<string>,
 ): WanxiNpcPlacement[] {
   const byId = new Map<string, WanxiNpcPlacement>();
   for (const placement of baseline) {
     byId.set(placement.npcId, {
       ...placement,
-      attention: placement.npcId === attentionNpcId,
+      attention: attentionNpcIds.has(placement.npcId),
     });
   }
   for (const placement of storyPlacements) {
     byId.set(placement.npcId, {
       ...placement,
-      attention: placement.attention || placement.npcId === attentionNpcId,
+      attention: placement.attention || attentionNpcIds.has(placement.npcId),
     });
   }
   return [...byId.values()].sort(
@@ -37,16 +39,28 @@ export async function resolveWanxiSceneRuntimeSnapshot(
   cultivatorId: string,
 ): Promise<WanxiSceneRuntimeSnapshot> {
   const story = await getWanxiLampStorySnapshot(cultivatorId);
+  const continuity = await getWanxiContinuitySnapshot(cultivatorId, {
+    storyCompleted: story.completed,
+  });
   const attention = getWanxiLampStoryAttentionTarget(story.stage);
   const storyPlacements = getWanxiLampStoryNpcPlacements(story.stage);
+  const attentionNpcIds = new Set<string>();
+  if (attention?.type === 'npc') attentionNpcIds.add(attention.npcId);
+  if (continuity.unlocked) {
+    for (const event of continuity.dailyEvents) {
+      if (event.completed) continue;
+      const npc = getWanxiNpcByRoleKey(event.roleKey);
+      if (npc) attentionNpcIds.add(npc.id);
+    }
+  }
 
   return {
     sceneId: WANXI_MAIN_SCENE.id,
-    revision: 2,
+    revision: 3,
     npcPlacements: mergeNpcPlacements(
       WANXI_DEFAULT_NPC_PLACEMENTS,
       storyPlacements,
-      attention?.type === 'npc' ? attention.npcId : undefined,
+      attentionNpcIds,
     ),
     enabledActivityBindingIds: getWanxiLampStoryActiveBindingIds(story.stage),
     locationStates: WANXI_LOCATION_PLACEMENTS.map((placement) => ({

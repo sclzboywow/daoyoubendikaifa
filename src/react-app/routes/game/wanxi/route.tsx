@@ -1,9 +1,12 @@
 import {
+  WanxiChronicleDrawer,
+  WanxiDailyEventDrawer,
   WanxiLocationDetailDrawer,
   WanxiNpcDetailDrawer,
   WanxiSceneCanvas,
   WanxiSceneChrome,
   WanxiStoryEffectNotice,
+  useWanxiContinuityQuery,
   useWanxiLampStoryQuery,
   useWanxiSceneQuery,
 } from '@app/components/feature/wanxi';
@@ -12,12 +15,19 @@ import { useInkUI } from '@app/components/providers/InkUIProvider';
 import { InkButton } from '@app/components/ui/InkButton';
 import { useResourceMutation } from '@app/lib/resources/mutations';
 import {
+  completeWanxiDailyEvent,
+  fetchWanxiDailyEventNarrative,
+} from '@app/components/feature/wanxi/wanxiContinuityApi';
+import {
   getWanxiLampStoryActionPresentation,
   getWanxiLocation,
   getWanxiNpcById,
   getWanxiNpcByRoleKey,
+  isWanxiDailyEventId,
   isWanxiLampStoryActionId,
   WANXI_LAMP_STORY_ACTIONS,
+  type WanxiDailyEventNarrativeResult,
+  type WanxiDailyEventSnapshot,
   type WanxiLampStoryActionPresentation,
   type WanxiLampStorySnapshot,
 } from '@shared/engine/wanxi';
@@ -33,11 +43,15 @@ const CLOSE_SELECT_SUPPRESS_MS = 450;
 export default function WanxiPage() {
   const query = useWanxiSceneQuery();
   const storyQuery = useWanxiLampStoryQuery();
+  const continuityQuery = useWanxiContinuityQuery();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { mutate } = useResourceMutation();
   const { pushToast } = useInkUI();
   const [acting, setActing] = useState(false);
+  const [chronicleOpen, setChronicleOpen] = useState(false);
+  const [dailyNarrative, setDailyNarrative] =
+    useState<WanxiDailyEventNarrativeResult | null>(null);
   const suppressSelectUntilRef = useRef(0);
   const [selection, setSelectionState] = useState<WanxiSelection | null>(() => {
     const npc = searchParams.get('npc');
@@ -57,7 +71,7 @@ export default function WanxiPage() {
   useEffect(() => {
     if (isSelectSuppressed()) {
       if (!searchParams.get('npc') && !searchParams.get('location')) {
-        setSelectionState(null);
+        setSelectionState((current) => (current === null ? current : null));
       }
       return;
     }
@@ -65,14 +79,22 @@ export default function WanxiPage() {
     const npc = searchParams.get('npc');
     const location = searchParams.get('location');
     if (npc) {
-      setSelectionState({ kind: 'npc', roleKey: npc });
+      setSelectionState((current) =>
+        current?.kind === 'npc' && current.roleKey === npc
+          ? current
+          : { kind: 'npc', roleKey: npc },
+      );
       return;
     }
     if (location) {
-      setSelectionState({ kind: 'location', locationId: location });
+      setSelectionState((current) =>
+        current?.kind === 'location' && current.locationId === location
+          ? current
+          : { kind: 'location', locationId: location },
+      );
       return;
     }
-    setSelectionState(null);
+    setSelectionState((current) => (current === null ? current : null));
   }, [searchParams]);
 
   const selectedNpc =
@@ -119,7 +141,45 @@ export default function WanxiPage() {
     navigate('/game/wanxi', { replace: true });
   }, [navigate]);
 
+  const openDailyEvent = async (eventId: string) => {
+    setActing(true);
+    try {
+      const narrative = await fetchWanxiDailyEventNarrative(eventId);
+      setSelection({});
+      setDailyNarrative(narrative);
+    } catch (error) {
+      pushToast({
+        message: error instanceof Error ? error.message : '这件坊中见闻暂时接不上',
+        tone: 'warning',
+      });
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const finishDailyEvent = async (eventId: string) => {
+    setActing(true);
+    try {
+      await completeWanxiDailyEvent(eventId);
+      setDailyNarrative(null);
+      continuityQuery.reload();
+      query.reload();
+      pushToast({ message: '这一刻已经记进万戏坊纪事。', tone: 'success' });
+    } catch (error) {
+      pushToast({
+        message: error instanceof Error ? error.message : '这件见闻暂时无法记下',
+        tone: 'warning',
+      });
+    } finally {
+      setActing(false);
+    }
+  };
+
   const runActivity = async (bindingId: string) => {
+    if (isWanxiDailyEventId(bindingId)) {
+      await openDailyEvent(bindingId);
+      return;
+    }
     if (!isWanxiLampStoryActionId(bindingId)) {
       pushToast({ message: '这个活动暂未开放', tone: 'warning' });
       return;
@@ -147,6 +207,7 @@ export default function WanxiPage() {
       }
       query.reload();
       storyQuery.reload();
+      continuityQuery.reload();
     } catch (error) {
       pushToast({
         message: error instanceof Error ? error.message : '这段故事暂时无法继续',
@@ -155,6 +216,11 @@ export default function WanxiPage() {
     } finally {
       setActing(false);
     }
+  };
+
+  const locateDailyEvent = (event: WanxiDailyEventSnapshot) => {
+    setChronicleOpen(false);
+    setSelection({ npc: event.roleKey });
   };
 
   if (query.loading && !query.data) {
@@ -179,6 +245,7 @@ export default function WanxiPage() {
 
   const snapshot = query.data;
   const story = storyQuery.data;
+  const continuity = continuityQuery.data;
   const selectedNpcPlacement = selectedNpc
     ? snapshot.npcPlacements.find((placement) => placement.npcId === selectedNpc.id)
     : null;
@@ -198,20 +265,32 @@ export default function WanxiPage() {
         onLocationSelect={(locationId) => setSelection({ location: locationId })}
       />
 
-      <WanxiSceneChrome />
+      <WanxiSceneChrome onOpenChronicle={() => setChronicleOpen(true)} />
 
-      {story ? (
+      {story && !story.completed ? (
         <div className="pointer-events-none absolute bottom-[max(env(safe-area-inset-bottom),0.75rem)] left-[max(env(safe-area-inset-left),0.75rem)] z-30 max-w-[min(26rem,calc(100vw-1.5rem))]">
           <div className="border-ink/15 bg-bgpaper/92 border border-dashed px-4 py-3 shadow-[0_8px_28px_rgba(44,24,16,0.09)] backdrop-blur-sm">
-            <p className="text-crimson text-xs tracking-[0.12em]">
-              {story.completed ? '支线完结' : '坊中见闻'} · 灯火未迟
-            </p>
+            <p className="text-crimson text-xs tracking-[0.12em]">坊中见闻 · 灯火未迟</p>
             <p className="text-ink mt-1 text-sm">{story.objective}</p>
             <p className="text-ink-secondary mt-1 line-clamp-2 text-xs leading-5">
               {story.summary}
             </p>
           </div>
         </div>
+      ) : continuity?.unlocked ? (
+        <button
+          type="button"
+          onClick={() => setChronicleOpen(true)}
+          className="border-ink/15 bg-bgpaper/92 pointer-events-auto absolute bottom-[max(env(safe-area-inset-bottom),0.75rem)] left-[max(env(safe-area-inset-left),0.75rem)] z-30 max-w-[min(24rem,calc(100vw-1.5rem))] border border-dashed px-4 py-3 text-left shadow-[0_8px_28px_rgba(44,24,16,0.09)] backdrop-blur-sm"
+        >
+          <p className="text-crimson text-xs tracking-[0.12em]">今日坊中见闻</p>
+          <p className="text-ink mt-1 text-sm">
+            {continuity.completedToday}/{continuity.dailyEvents.length} 已记下
+          </p>
+          <p className="text-ink-secondary mt-1 text-xs leading-5">
+            故事结束了，坊中人的日子还在继续。
+          </p>
+        </button>
       ) : null}
 
       {storyEffect ? (
@@ -228,6 +307,7 @@ export default function WanxiPage() {
           placement={selectedNpcPlacement}
           enabledActivityBindingIds={snapshot.enabledActivityBindingIds}
           story={story}
+          continuity={continuity}
           busy={acting}
           onClose={clearSelection}
           onActivitySelect={runActivity}
@@ -242,6 +322,21 @@ export default function WanxiPage() {
           onActivitySelect={runActivity}
         />
       ) : null}
+
+      <WanxiChronicleDrawer
+        isOpen={chronicleOpen}
+        continuity={continuity}
+        loading={continuityQuery.loading}
+        onClose={() => setChronicleOpen(false)}
+        onLocate={locateDailyEvent}
+      />
+
+      <WanxiDailyEventDrawer
+        narrative={dailyNarrative}
+        busy={acting}
+        onClose={() => setDailyNarrative(null)}
+        onComplete={(eventId) => void finishDailyEvent(eventId)}
+      />
     </div>
   );
 }

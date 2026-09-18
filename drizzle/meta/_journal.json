@@ -253,6 +253,13 @@
       "when": 1789657298344,
       "tag": "0035_wanxi_story_battle_anchor",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1789698000000,
+      "tag": "0036_wanxi_continuity",
+      "breakpoints": true
     }
   ]
 }

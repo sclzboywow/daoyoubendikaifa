@@ -20,6 +20,7 @@ import materialSemanticEnrichmentPrompt from '@server/prompts/material-semantic-
 import productNamingPrompt from '@server/prompts/product-naming.md?raw';
 import spiritFieldStageJudgmentPrompt from '@server/prompts/spirit-field-stage-judgment.md?raw';
 import spiritFieldFinalizationPrompt from '@server/prompts/spirit-field-finalization.md?raw';
+import wanxiDailyEventPrompt from '@server/prompts/wanxi-daily-event.md?raw';
 import wanxiNarrativePrompt from '@server/prompts/wanxi-narrative.md?raw';
 import wanxiNpcChatPrompt from '@server/prompts/wanxi-npc-chat.md?raw';
 import yieldStoryPrompt from '@server/prompts/yield-story.md?raw';
@@ -61,6 +62,7 @@ const bundledPromptSources: Record<string, string> = {
   'product-naming.md': productNamingPrompt,
   'spirit-field-stage-judgment.md': spiritFieldStageJudgmentPrompt,
   'spirit-field-finalization.md': spiritFieldFinalizationPrompt,
+  'wanxi-daily-event.md': wanxiDailyEventPrompt,
   'wanxi-narrative.md': wanxiNarrativePrompt,
   'wanxi-npc-chat.md': wanxiNpcChatPrompt,
   'yield-story.md': yieldStoryPrompt,

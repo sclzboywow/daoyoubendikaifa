@@ -204,6 +204,7 @@ const LocationMarker = memo(function LocationMarker({
 interface NpcMarkerProps {
   placement: WanxiNpcPlacement;
   selected: boolean;
+  mapScale: number;
   uiScale: number;
   onSelect(id: string): void;
 }
@@ -211,6 +212,7 @@ interface NpcMarkerProps {
 const NpcMarker = memo(function NpcMarker({
   placement,
   selected,
+  mapScale,
   uiScale,
   onSelect,
 }: NpcMarkerProps) {
@@ -219,6 +221,8 @@ const NpcMarker = memo(function NpcMarker({
 
   const importance = placement.marker?.importance ?? 'normal';
   const attention = Boolean(placement.attention);
+  const showName = selected || attention || mapScale >= 0.58;
+  const showIdentity = selected || mapScale >= 1.3;
 
   return (
     <button
@@ -253,18 +257,37 @@ const NpcMarker = memo(function NpcMarker({
               attention ? 'bg-crimson' : 'bg-ink/65',
             )}
           />
+          {attention ? (
+            <span className="border-bgpaper bg-crimson text-bgpaper absolute -top-2 -right-2 flex size-4 items-center justify-center rounded-full border text-[10px] font-bold leading-none shadow-sm">
+              !
+            </span>
+          ) : null}
         </span>
 
         <span
           className={cn(
-            'border-ink/15 bg-bgpaper/95 text-ink pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 whitespace-nowrap border px-2 py-1 text-[11px] shadow-sm backdrop-blur-sm transition-all duration-150',
-            selected
+            'pointer-events-none absolute top-full left-1/2 mt-1.5 -translate-x-1/2 whitespace-nowrap text-[12px] leading-none transition-all duration-150',
+            selected || attention ? 'text-crimson' : 'text-ink/90',
+            showName
               ? 'translate-y-0 opacity-100'
               : 'translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100',
           )}
+          style={{
+            textShadow:
+              '0 1px 2px rgba(248,243,230,0.98), 0 0 5px rgba(248,243,230,0.95)',
+          }}
         >
           <span className="font-medium">{npc.name}</span>
-          <span className="text-ink-secondary ml-1">· {npc.identity}</span>
+          <span
+            className={cn(
+              'text-ink-secondary ml-1 text-[10px] font-normal',
+              showIdentity
+                ? 'inline'
+                : 'hidden group-hover:inline group-focus-visible:inline',
+            )}
+          >
+            · {npc.identity}
+          </span>
         </span>
       </span>
     </button>
@@ -385,13 +408,14 @@ export function WanxiSceneCanvas({
             {npcPlacements.map((placement) => {
               const selected = selectedNpcId === placement.npcId;
               const minScale = placement.marker?.minScale ?? 0.55;
-              if (!selected && mapScale < minScale) return null;
+              if (!selected && !placement.attention && mapScale < minScale) return null;
 
               return (
                 <NpcMarker
                   key={`${placement.npcId}:${placement.point.x}:${placement.point.y}`}
                   placement={placement}
                   selected={selected}
+                  mapScale={mapScale}
                   uiScale={uiScale}
                   onSelect={onNpcSelect}
                 />

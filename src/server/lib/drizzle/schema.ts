@@ -1775,4 +1775,61 @@ export const wanxiStoryProgress = pgTable(
     ),
   ],
 );
+// ===== 万戏坊长期人物关系与每日见闻 =====
+// 主线剧情完成后，关系与记忆继续独立增长；不把自由聊天全文持久化。
+export const wanxiNpcRelationships = pgTable(
+  'wanjiedaoyou_wanxi_npc_relationships',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cultivatorId: uuid('cultivator_id')
+      .references(() => cultivators.id, { onDelete: 'cascade' })
+      .notNull(),
+    npcRoleKey: varchar('npc_role_key', { length: 64 }).notNull(),
+    familiarity: integer('familiarity').notNull().default(0),
+    interactionCount: integer('interaction_count').notNull().default(0),
+    memoryTags: jsonb('memory_tags').$type<string[]>().notNull().default([]),
+    milestones: jsonb('milestones').$type<string[]>().notNull().default([]),
+    lastInteractionAt: timestamp('last_interaction_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('wanxi_npc_relationships_cultivator_role_uidx').on(
+      table.cultivatorId,
+      table.npcRoleKey,
+    ),
+    index('wanxi_npc_relationships_cultivator_updated_idx').on(
+      table.cultivatorId,
+      table.updatedAt,
+    ),
+  ],
+);
+
+export const wanxiDailyEventProgress = pgTable(
+  'wanjiedaoyou_wanxi_daily_event_progress',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cultivatorId: uuid('cultivator_id')
+      .references(() => cultivators.id, { onDelete: 'cascade' })
+      .notNull(),
+    eventDate: varchar('event_date', { length: 10 }).notNull(),
+    eventId: varchar('event_id', { length: 120 }).notNull(),
+    completedAt: timestamp('completed_at').defaultNow().notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('wanxi_daily_event_progress_cultivator_date_event_uidx').on(
+      table.cultivatorId,
+      table.eventDate,
+      table.eventId,
+    ),
+    index('wanxi_daily_event_progress_cultivator_date_idx').on(
+      table.cultivatorId,
+      table.eventDate,
+    ),
+  ],
+);
 
