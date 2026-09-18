@@ -26,6 +26,10 @@ export interface WanxiNpcRelationshipSnapshot {
   npcName: string;
   stage: WanxiRelationshipStage;
   stageLabel: string;
+  /** Whether the player has actually completed a relationship-forming interaction. */
+  met: boolean;
+  /** Internal interaction count is exposed for content gating, not as a visible progress bar. */
+  interactionCount: number;
   memoryNotes: string[];
   lastInteractionAt?: string;
 }
@@ -35,7 +39,7 @@ export interface WanxiDailyEventDefinition {
   title: string;
   summary: string;
   promptLabel: string;
-  roleKey: Extract<WanxiNpcRoleKey, 'stage_musician' | 'mechanist'>;
+  roleKey: WanxiNpcRoleKey;
   locationId: string;
   familiarityDelta: number;
   memoryTag: string;
@@ -461,8 +465,13 @@ export function selectWanxiDailyEvents(args: {
   return picked;
 }
 
+export type WanxiLegacyContinuityRoleKey = Extract<
+  WanxiNpcRoleKey,
+  'stage_musician' | 'mechanist'
+>;
+
 export const WANXI_BASE_STORY_MEMORIES: Record<
-  WanxiDailyEventDefinition['roleKey'],
+  WanxiLegacyContinuityRoleKey,
   { familiarity: number; memoryTags: string[]; memoryNotes: string[] }
 > = {
   stage_musician: {
@@ -493,15 +502,33 @@ export const WANXI_BASE_STORY_MEMORIES: Record<
   },
 };
 
-const memoryTextByTag = new Map<string, string>([
-  ...Object.entries(WANXI_BASE_STORY_MEMORIES).flatMap(([, value]) =>
-    value.memoryTags.map((tag, index) => [tag, value.memoryNotes[index] ?? tag] as const),
+const baseMemoryTextByRoleTag = new Map<string, string>(
+  Object.entries(WANXI_BASE_STORY_MEMORIES).flatMap(([roleKey, value]) =>
+    value.memoryTags.map(
+      (tag, index) =>
+        [`${roleKey}:${tag}`, value.memoryNotes[index] ?? tag] as const,
+    ),
   ),
-  ...WANXI_DAILY_EVENT_DEFINITIONS.map((event) =>
-    [event.memoryTag, event.memoryText] as const,
-  ),
-]);
+);
 
+const dailyMemoryTextByTag = new Map<string, string>(
+  WANXI_DAILY_EVENT_DEFINITIONS.map(
+    (event) => [event.memoryTag, event.memoryText] as const,
+  ),
+);
+
+export function describeWanxiMemoryTagForRole(
+  roleKey: WanxiNpcRoleKey,
+  tag: string,
+): string {
+  return (
+    baseMemoryTextByRoleTag.get(`${roleKey}:${tag}`) ??
+    dailyMemoryTextByTag.get(tag) ??
+    tag
+  );
+}
+
+/** @deprecated Prefer describeWanxiMemoryTagForRole when the NPC role is known. */
 export function describeWanxiMemoryTag(tag: string): string {
-  return memoryTextByTag.get(tag) ?? tag;
+  return dailyMemoryTextByTag.get(tag) ?? tag;
 }

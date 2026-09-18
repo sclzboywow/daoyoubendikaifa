@@ -1,4 +1,5 @@
 export * from './continuity';
+export * from './characterProfiles';
 export * from './npcRoster';
 export * from './definitions';
 export * from './interactiveEvents';

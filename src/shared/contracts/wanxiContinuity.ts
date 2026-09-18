@@ -1,7 +1,11 @@
-import type {
-  WanxiContinuitySnapshot,
-  WanxiDailyEventNarrativeResult,
-  WanxiDailyEventResolutionResult,
+import type { PlayerStateMutationResponse } from '@shared/contracts/player';
+import {
+  WANXI_CORE_NPC_ROLE_KEYS,
+  type WanxiContinuitySnapshot,
+  type WanxiDailyEventNarrativeResult,
+  type WanxiDailyEventResolutionResult,
+  type WanxiFirstContactResolutionResult,
+  type WanxiNpcRelationshipSnapshot,
 } from '@shared/engine/wanxi';
 import { z } from 'zod';
 
@@ -18,6 +22,16 @@ export const WanxiDailyEventResolveRequestSchema = z.object({
 
 export type WanxiDailyEventResolveRequest = z.infer<
   typeof WanxiDailyEventResolveRequestSchema
+>;
+
+export const WanxiCoreNpcRoleSchema = z.enum(WANXI_CORE_NPC_ROLE_KEYS);
+
+export const WanxiFirstContactResolveRequestSchema = z.object({
+  choiceId: z.string().trim().min(1).max(80),
+});
+
+export type WanxiFirstContactResolveRequest = z.infer<
+  typeof WanxiFirstContactResolveRequestSchema
 >;
 
 export interface WanxiContinuityReadResponse {
@@ -37,6 +51,13 @@ export interface WanxiDailyEventResolveResponse {
     resolution: WanxiDailyEventResolutionResult;
   };
 }
+
+export type WanxiFirstContactMutationResponse =
+  PlayerStateMutationResponse<{
+    continuity: WanxiContinuitySnapshot;
+    relationship: WanxiNpcRelationshipSnapshot;
+    resolution: WanxiFirstContactResolutionResult;
+  }>;
 
 /** @deprecated Interactive Event V2 resolves an event through a player choice. */
 export interface WanxiDailyEventCompleteResponse {

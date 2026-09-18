@@ -8,12 +8,14 @@ import {
   getWanxiEnabledBindings,
   getWanxiLocation,
   getWanxiRegion,
+  isWanxiCoreNpcRoleKey,
   type WanxiContinuitySnapshot,
   type WanxiLampStorySnapshot,
   type WanxiLocationDefinition,
   type WanxiNpcDefinition,
   type WanxiNpcPlacement,
 } from '@shared/engine/wanxi';
+import { WanxiFirstContactPanel } from './WanxiFirstContactPanel';
 import { WanxiNarrativeControls } from './narrative/WanxiNarrativeControls';
 import { WanxiNarrativeLines } from './narrative/WanxiNarrativeLines';
 import { WanxiNpcChatComposer } from './narrative/WanxiNpcChatComposer';
@@ -111,6 +113,34 @@ export function WanxiNpcDetailDrawer({
   ];
   const narrativeReady = playback.complete;
   const visibleOptions = narrativeReady && !narrative.loading ? options : [];
+  const firstContactRole =
+    relationship &&
+    !relationship.met &&
+    isWanxiCoreNpcRoleKey(npc.roleKey)
+      ? npc.roleKey
+      : null;
+  const locationLabel = region
+    ? `${region.name}${location && location.name !== region.name ? ` · ${location.name}` : ''}`
+    : undefined;
+
+  if (firstContactRole) {
+    return (
+      <InkDetailDrawer
+        isOpen
+        onClose={onClose}
+        title={`初见 · ${npc.name}`}
+        description={npc.identity}
+        size="lg"
+        closeLabel="回到坊中"
+      >
+        <WanxiFirstContactPanel
+          npc={npc}
+          roleKey={firstContactRole}
+          locationLabel={locationLabel}
+        />
+      </InkDetailDrawer>
+    );
+  }
 
   return (
     <InkDetailDrawer isOpen onClose={onClose} title={`与${npc.name}交谈`} description={npc.identity} size="xl" closeLabel="回到坊中">

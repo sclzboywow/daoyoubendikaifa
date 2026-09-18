@@ -13,6 +13,7 @@ import { toPlayerStateMutationResponse } from '@server/lib/services/ResourceMuta
 import {
   completeWanxiDailyEventAndRemember,
   getWanxiContinuitySnapshot,
+  resolveWanxiFirstContactAndRemember,
 } from '@server/lib/services/wanxi/WanxiContinuityService';
 import {
   getWanxiDailyEventNarrative,
@@ -40,10 +41,13 @@ import {
   type WanxiMapEditorSaveRequest,
 } from '@shared/contracts/wanxiMapEditor';
 import {
+  WanxiCoreNpcRoleSchema,
   WanxiDailyEventRequestSchema,
   WanxiDailyEventResolveRequestSchema,
+  WanxiFirstContactResolveRequestSchema,
   type WanxiDailyEventRequest,
   type WanxiDailyEventResolveRequest,
+  type WanxiFirstContactResolveRequest,
 } from '@shared/contracts/wanxiContinuity';
 import {
   WanxiLampChatRoleSchema,
@@ -177,6 +181,40 @@ router.get('/scene', async (c) => {
     return errorResponse(c, error);
   }
 });
+
+
+router.post(
+  '/relationship/:roleKey/first-contact',
+  validateJson(WanxiFirstContactResolveRequestSchema),
+  async (c) => {
+    try {
+      const active = actor(c);
+      const parsedRole = WanxiCoreNpcRoleSchema.safeParse(
+        c.req.param('roleKey'),
+      );
+      if (!parsedRole.success) {
+        throw new WanxiLampStoryError(
+          '这个人暂时不属于正式万戏坊人物关系体系',
+          404,
+        );
+      }
+      const input =
+        getValidatedJson<WanxiFirstContactResolveRequest>(c);
+      const committed =
+        await resolveWanxiFirstContactAndRemember({
+          userId: active.userId,
+          cultivatorId: active.cultivatorId,
+          roleKey: parsedRole.data,
+          choiceId: input.choiceId,
+        });
+      return c.json(
+        toPlayerStateMutationResponse(committed),
+      );
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
 
 router.get('/continuity', async (c) => {
   try {

@@ -21,22 +21,58 @@ export function useWanxiContinuityQuery() {
 
   const reload = useCallback(() => {
     setToken((value) => value + 1);
-    setState((current) => ({ ...current, loading: true, error: null }));
+    setState((current) => ({
+      ...current,
+      loading: true,
+      error: null,
+    }));
   }, []);
 
   useEffect(() => {
+    const onChanged = (event: Event) => {
+      const detail = (event as CustomEvent<WanxiContinuitySnapshot>)
+        .detail;
+      if (detail) {
+        setState({
+          data: detail,
+          loading: false,
+          error: null,
+        });
+        return;
+      }
+      reload();
+    };
+    window.addEventListener('wanxi:continuity-changed', onChanged);
+    return () =>
+      window.removeEventListener(
+        'wanxi:continuity-changed',
+        onChanged,
+      );
+  }, [reload]);
+
+  useEffect(() => {
     const controller = new AbortController();
-    void fetch('/api/wanxi/continuity', { signal: controller.signal })
+    void fetch('/api/wanxi/continuity', {
+      signal: controller.signal,
+    })
       .then(async (response) => {
         const json = (await response.json()) as ApiResponse;
         if (!response.ok || !json.success) {
-          throw new Error('error' in json ? json.error : `HTTP ${response.status}`);
+          throw new Error(
+            'error' in json
+              ? json.error
+              : `HTTP ${response.status}`,
+          );
         }
         return json.data;
       })
       .then((data) => {
         if (!controller.signal.aborted) {
-          setState({ data, loading: false, error: null });
+          setState({
+            data,
+            loading: false,
+            error: null,
+          });
         }
       })
       .catch((error: unknown) => {
@@ -44,7 +80,10 @@ export function useWanxiContinuityQuery() {
         setState({
           data: null,
           loading: false,
-          error: error instanceof Error ? error.message : '万戏坊纪事读取失败',
+          error:
+            error instanceof Error
+              ? error.message
+              : '万戏坊纪事读取失败',
         });
       });
     return () => controller.abort();
