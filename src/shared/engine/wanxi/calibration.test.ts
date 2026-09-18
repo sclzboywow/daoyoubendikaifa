@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest';
+import { WANXI_NPCS } from './definitions';
+import { createDefaultWanxiMapCalibrationDraft } from './editorDefaults';
 import {
+  assessWanxiPlacementSafety,
   validateWanxiMapCalibration,
   wanxiPercentToPixel,
   wanxiPixelToPercent,
@@ -32,17 +35,28 @@ describe('wanxi map calibration', () => {
     expect(wanxiPointInPolygon({ x: 150, y: 50 }, polygon)).toBe(false);
   });
 
-  test('rejects slots inside blocked zones', () => {
+  test('default editor draft records every registered NPC', () => {
+    const draft = createDefaultWanxiMapCalibrationDraft();
+    expect(draft.npcPlacements).toHaveLength(WANXI_NPCS.length);
+    expect(new Set(draft.npcPlacements.map((item) => item.npcId)).size).toBe(
+      WANXI_NPCS.length,
+    );
+  });
+
+  test('rejects npc placements inside blocked zones', () => {
     const draft: WanxiMapCalibrationDraft = {
       version: 1,
       sceneId: 'wanxi_main',
       logicalSize: SIZE,
-      slots: [
+      slots: [],
+      npcPlacements: [
         {
-          id: 'lake_slot_01',
+          npcId: 'wanxi_npc_master',
           regionId: 'lakeside',
           locationId: 'lakeside',
           point: { x: 2200, y: 1200 },
+          locked: false,
+          runtimeVisible: true,
         },
       ],
       zones: [
@@ -63,43 +77,20 @@ describe('wanxi map calibration', () => {
     };
     expect(validateWanxiMapCalibration(draft)).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: 'SLOT_INSIDE_BLOCKED_ZONE' }),
+        expect.objectContaining({ code: 'NPC_INSIDE_BLOCKED_ZONE' }),
       ]),
     );
   });
 
-  test('rejects slots outside a local safe zone', () => {
-    const draft: WanxiMapCalibrationDraft = {
-      version: 1,
-      sceneId: 'wanxi_main',
-      logicalSize: SIZE,
-      slots: [
-        {
-          id: 'square_slot_01',
-          regionId: 'square',
-          locationId: 'central_square',
-          point: { x: 100, y: 100 },
-        },
-      ],
-      zones: [
-        {
-          id: 'safe.square.01',
-          kind: 'safe',
-          regionId: 'square',
-          locationId: 'central_square',
-          polygon: [
-            { x: 1000, y: 900 },
-            { x: 1800, y: 900 },
-            { x: 1800, y: 1400 },
-            { x: 1000, y: 1400 },
-          ],
-        },
-      ],
-    };
-    expect(validateWanxiMapCalibration(draft)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'SLOT_OUTSIDE_SAFE_ZONE' }),
-      ]),
+  test('safe-zone absence does not prevent manual placement', () => {
+    const safety = assessWanxiPlacementSafety(
+      { x: 100, y: 100 },
+      'square',
+      'central_square',
+      [],
     );
+    expect(safety.ok).toBe(true);
+    expect(safety.level).toBe('warning');
+    expect(safety.code).toBe('NO_SAFE_ZONE');
   });
 });

@@ -27,6 +27,16 @@ export interface WanxiCalibrationSlot {
   tags?: string[];
 }
 
+export interface WanxiCalibrationNpcPlacement {
+  npcId: string;
+  regionId: WanxiRegionId;
+  locationId?: string;
+  point: WanxiPixelPoint;
+  locked: boolean;
+  /** Whether this NPC participates in the ordinary runtime baseline. */
+  runtimeVisible: boolean;
+}
+
 export interface WanxiCalibrationZone {
   id: string;
   kind: WanxiCalibrationZoneKind;
@@ -43,6 +53,7 @@ export interface WanxiMapCalibrationDraft {
   logicalSize: WanxiCalibrationLogicalSize;
   slots: WanxiCalibrationSlot[];
   zones: WanxiCalibrationZone[];
+  npcPlacements: WanxiCalibrationNpcPlacement[];
 }
 
 export type WanxiCalibrationIssueLevel = 'error' | 'warning';
@@ -73,8 +84,16 @@ export function wanxiPixelToPercent(
   logicalSize: WanxiCalibrationLogicalSize,
 ): WanxiPoint {
   return {
-    x: Number(((clamp(point.x, 0, logicalSize.width) / logicalSize.width) * 100).toFixed(4)),
-    y: Number(((clamp(point.y, 0, logicalSize.height) / logicalSize.height) * 100).toFixed(4)),
+    x: Number(
+      ((clamp(point.x, 0, logicalSize.width) / logicalSize.width) * 100).toFixed(
+        4,
+      ),
+    ),
+    y: Number(
+      ((clamp(point.y, 0, logicalSize.height) / logicalSize.height) * 100).toFixed(
+        4,
+      ),
+    ),
   };
 }
 
@@ -111,7 +130,8 @@ export function wanxiPointInPolygon(
     const intersects =
       a.y > point.y !== b.y > point.y &&
       point.x <
-        ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y || Number.EPSILON) +
+        ((b.x - a.x) * (point.y - a.y)) /
+          (b.y - a.y || Number.EPSILON) +
           a.x;
     if (intersects) inside = !inside;
   }
@@ -136,12 +156,74 @@ function distance(a: WanxiPixelPoint, b: WanxiPixelPoint) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+export function assessWanxiPlacementSafety(
+  point: WanxiPixelPoint,
+  regionId: WanxiRegionId,
+  locationId: string | undefined,
+  zones: readonly WanxiCalibrationZone[],
+) {
+  const blocked = zones.find(
+    (zone) =>
+      zone.kind === 'blocked' && wanxiPointInPolygon(point, zone.polygon),
+  );
+  if (blocked) {
+    return {
+      ok: false,
+      level: 'error' as const,
+      code: 'INSIDE_BLOCKED_ZONE',
+      message: `落点位于禁止区域 ${blocked.id}${
+        blocked.blockedType ? `（${blocked.blockedType}）` : ''
+      }`,
+    };
+  }
+
+  const localSafeZones = zones.filter(
+    (zone) =>
+      zone.kind === 'safe' &&
+      zone.regionId === regionId &&
+      (!locationId ||
+        !zone.locationId ||
+        zone.locationId === locationId),
+  );
+
+  if (
+    localSafeZones.length > 0 &&
+    !localSafeZones.some((zone) =>
+      wanxiPointInPolygon(point, zone.polygon),
+    )
+  ) {
+    return {
+      ok: false,
+      level: 'warning' as const,
+      code: 'OUTSIDE_SAFE_ZONE',
+      message: '落点不在当前 Region / Location 的 Safe Zone 内。',
+    };
+  }
+
+  if (localSafeZones.length === 0) {
+    return {
+      ok: true,
+      level: 'warning' as const,
+      code: 'NO_SAFE_ZONE',
+      message: '当前区域还没有 Safe Zone，仅检查 Blocked Zone。',
+    };
+  }
+
+  return {
+    ok: true,
+    level: 'ok' as const,
+    code: 'OK',
+    message: '落点合法：在 Safe Zone 内，且未进入 Blocked Zone。',
+  };
+}
+
 export function validateWanxiMapCalibration(
   draft: WanxiMapCalibrationDraft,
-  options?: { minSlotDistance?: number },
+  options?: { minSlotDistance?: number; minNpcDistance?: number },
 ): WanxiCalibrationIssue[] {
   const issues: WanxiCalibrationIssue[] = [];
   const minSlotDistance = options?.minSlotDistance ?? 56;
+  const minNpcDistance = options?.minNpcDistance ?? 90;
 
   if (
     draft.logicalSize.width <= 0 ||
@@ -149,12 +231,13 @@ export function validateWanxiMapCalibration(
     !Number.isFinite(draft.logicalSize.width) ||
     !Number.isFinite(draft.logicalSize.height)
   ) {
-    issues.push({
-      level: 'error',
-      code: 'INVALID_LOGICAL_SIZE',
-      message: '地图 logicalSize 必须是有效的正数。',
-    });
-    return issues;
+    return [
+      {
+        level: 'error',
+        code: 'INVALID_LOGICAL_SIZE',
+        message: '地图 logicalSize 必须是有效的正数。',
+      },
+    ];
   }
 
   const slotIds = new Set<string>();
@@ -197,7 +280,11 @@ export function validateWanxiMapCalibration(
         message: `区域 ${zone.id} 至少需要 3 个顶点。`,
       });
     }
-    if (zone.polygon.some((point) => !pointInBounds(point, draft.logicalSize))) {
+    if (
+      zone.polygon.some((point) =>
+        !pointInBounds(point, draft.logicalSize),
+      )
+    ) {
       issues.push({
         level: 'error',
         code: 'ZONE_OUT_OF_BOUNDS',
@@ -207,14 +294,62 @@ export function validateWanxiMapCalibration(
     }
   }
 
+  const npcIds = new Set<string>();
+  for (const placement of draft.npcPlacements) {
+    if (npcIds.has(placement.npcId)) {
+      issues.push({
+        level: 'error',
+        code: 'DUPLICATE_NPC_PLACEMENT',
+        entityId: placement.npcId,
+        message: `NPC ${placement.npcId} 存在重复摆放。`,
+      });
+    }
+    npcIds.add(placement.npcId);
+
+    if (!pointInBounds(placement.point, draft.logicalSize)) {
+      issues.push({
+        level: 'error',
+        code: 'NPC_OUT_OF_BOUNDS',
+        entityId: placement.npcId,
+        message: `NPC ${placement.npcId} 超出地图范围。`,
+      });
+      continue;
+    }
+
+    const safety = assessWanxiPlacementSafety(
+      placement.point,
+      placement.regionId,
+      placement.locationId,
+      draft.zones,
+    );
+    if (safety.code === 'INSIDE_BLOCKED_ZONE') {
+      issues.push({
+        level: 'error',
+        code: 'NPC_INSIDE_BLOCKED_ZONE',
+        entityId: placement.npcId,
+        message: `NPC ${placement.npcId} ${safety.message}。`,
+      });
+    } else if (safety.code === 'OUTSIDE_SAFE_ZONE') {
+      issues.push({
+        level: 'warning',
+        code: 'NPC_OUTSIDE_SAFE_ZONE',
+        entityId: placement.npcId,
+        message: `NPC ${placement.npcId} ${safety.message}`,
+      });
+    }
+  }
+
   const safeZones = draft.zones.filter((zone) => zone.kind === 'safe');
   const blockedZones = draft.zones.filter((zone) => zone.kind === 'blocked');
 
-  if (draft.slots.length > 0 && safeZones.length === 0) {
+  if (
+    (draft.slots.length > 0 || draft.npcPlacements.length > 0) &&
+    safeZones.length === 0
+  ) {
     issues.push({
       level: 'warning',
       code: 'NO_SAFE_ZONES',
-      message: '当前已有站位槽，但还没有绘制任何 Safe Zone。',
+      message: '当前已有 Slot 或 NPC，但还没有任何 Safe Zone；这不影响保存。',
     });
   }
 
@@ -222,11 +357,15 @@ export function validateWanxiMapCalibration(
     const localSafeZones = safeZones.filter(
       (zone) =>
         zone.regionId === slot.regionId &&
-        (!slot.locationId || !zone.locationId || zone.locationId === slot.locationId),
+        (!slot.locationId ||
+          !zone.locationId ||
+          zone.locationId === slot.locationId),
     );
     if (
       localSafeZones.length > 0 &&
-      !localSafeZones.some((zone) => wanxiPointInPolygon(slot.point, zone.polygon))
+      !localSafeZones.some((zone) =>
+        wanxiPointInPolygon(slot.point, zone.polygon),
+      )
     ) {
       issues.push({
         level: 'error',
@@ -244,7 +383,7 @@ export function validateWanxiMapCalibration(
         level: 'error',
         code: 'SLOT_INSIDE_BLOCKED_ZONE',
         entityId: slot.id,
-        message: `站位槽 ${slot.id} 落入禁止区域 ${blocked.id}${blocked.blockedType ? `（${blocked.blockedType}）` : ''}。`,
+        message: `站位槽 ${slot.id} 落入禁止区域 ${blocked.id}。`,
       });
     }
   }
@@ -258,7 +397,22 @@ export function validateWanxiMapCalibration(
           level: 'warning',
           code: 'SLOTS_TOO_CLOSE',
           entityId: `${a.id},${b.id}`,
-          message: `站位槽 ${a.id} 与 ${b.id} 距离过近，NPC 名字可能重叠。`,
+          message: `站位槽 ${a.id} 与 ${b.id} 距离过近。`,
+        });
+      }
+    }
+  }
+
+  for (let i = 0; i < draft.npcPlacements.length; i += 1) {
+    for (let j = i + 1; j < draft.npcPlacements.length; j += 1) {
+      const a = draft.npcPlacements[i];
+      const b = draft.npcPlacements[j];
+      if (distance(a.point, b.point) < minNpcDistance) {
+        issues.push({
+          level: 'warning',
+          code: 'NPCS_TOO_CLOSE',
+          entityId: `${a.npcId},${b.npcId}`,
+          message: `NPC ${a.npcId} 与 ${b.npcId} 距离过近，名称可能重叠。`,
         });
       }
     }

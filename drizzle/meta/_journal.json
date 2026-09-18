@@ -260,6 +260,13 @@
       "when": 1789698000000,
       "tag": "0036_wanxi_continuity",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1789722000000,
+      "tag": "0037_wanxi_scene_editor_state",
+      "breakpoints": true
     }
   ]
 }

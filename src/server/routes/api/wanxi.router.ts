@@ -1,3 +1,5 @@
+import { isAdminIdentity } from '@server/lib/auth/adminAccess';
+import { isDevAuthBypassEnabled } from '@server/lib/auth/devAuthBypass';
 import {
   getValidatedJson,
   redisLockErrorResponse,
@@ -28,6 +30,16 @@ import {
 } from '@server/lib/services/wanxi/WanxiNarrativeService';
 import { resolveWanxiSceneRuntimeSnapshot } from '@server/lib/services/wanxi/WanxiSceneService';
 import {
+  ensureWanxiSceneEditorSnapshot,
+  persistWanxiSceneEditorState,
+  resetWanxiSceneEditorState,
+  WanxiSceneEditorError,
+} from '@server/lib/services/wanxi/WanxiSceneEditorService';
+import {
+  WanxiMapEditorSaveRequestSchema,
+  type WanxiMapEditorSaveRequest,
+} from '@shared/contracts/wanxiMapEditor';
+import {
   WanxiDailyEventRequestSchema,
   WanxiDailyEventResolveRequestSchema,
   type WanxiDailyEventRequest,
@@ -48,6 +60,31 @@ import { randomUUID } from 'node:crypto';
 const router = new Hono<AppEnv>();
 router.use('*', requireActiveCultivatorRef());
 
+
+function requireWanxiEditorAccess() {
+  return async (
+    c: Context<AppEnv>,
+    next: () => Promise<void>,
+  ) => {
+    if (
+      process.env.NODE_ENV === 'development' ||
+      isDevAuthBypassEnabled()
+    ) {
+      await next();
+      return;
+    }
+    const user = c.get('user');
+    if (!user || !isAdminIdentity(user)) {
+      c.res = c.json(
+        { success: false, error: '万戏坊地图编辑器仅管理员可用' },
+        403,
+      );
+      return;
+    }
+    await next();
+  };
+}
+
 function actor(c: Context<AppEnv>) {
   const active = c.get('activeCultivatorRef');
   if (!active) throw new WanxiLampStoryError('当前没有活跃角色', 404);
@@ -57,6 +94,13 @@ function actor(c: Context<AppEnv>) {
 function errorResponse(c: Context<AppEnv>, error: unknown) {
   const lockResponse = redisLockErrorResponse(error);
   if (lockResponse) return lockResponse;
+  if (error instanceof WanxiSceneEditorError) {
+    return jsonWithStatus(
+      c,
+      { success: false, error: error.message },
+      error.status,
+    );
+  }
   if (error instanceof WanxiLampStoryError) {
     return jsonWithStatus(
       c,
@@ -67,6 +111,60 @@ function errorResponse(c: Context<AppEnv>, error: unknown) {
   console.error('wanxi api error:', error);
   return c.json({ success: false, error: '万戏坊灵机暂乱，请稍后再试' }, 500);
 }
+
+
+router.get(
+  '/editor/state',
+  requireWanxiEditorAccess(),
+  async (c) => {
+    try {
+      const active = actor(c);
+      return c.json({
+        success: true,
+        data: await ensureWanxiSceneEditorSnapshot(active.userId),
+      });
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
+
+router.put(
+  '/editor/state',
+  requireWanxiEditorAccess(),
+  validateJson(WanxiMapEditorSaveRequestSchema),
+  async (c) => {
+    try {
+      const active = actor(c);
+      const input = getValidatedJson<WanxiMapEditorSaveRequest>(c);
+      return c.json({
+        success: true,
+        data: await persistWanxiSceneEditorState({
+          state: input.state,
+          updatedByUserId: active.userId,
+        }),
+      });
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
+
+router.post(
+  '/editor/reset',
+  requireWanxiEditorAccess(),
+  async (c) => {
+    try {
+      const active = actor(c);
+      return c.json({
+        success: true,
+        data: await resetWanxiSceneEditorState(active.userId),
+      });
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
 
 router.get('/scene', async (c) => {
   try {

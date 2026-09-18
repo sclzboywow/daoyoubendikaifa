@@ -1832,4 +1832,19 @@ export const wanxiDailyEventProgress = pgTable(
     ),
   ],
 );
-
+// ===== 万戏坊地图编辑器持久化 =====
+// 全局场景配置，不隶属于某个角色；编辑器保存后由正式场景运行时读取。
+export const wanxiSceneEditorStates = pgTable(
+  'wanjiedaoyou_wanxi_scene_editor_states',
+  {
+    sceneId: varchar('scene_id', { length: 64 }).primaryKey(),
+    revision: integer('revision').notNull().default(1),
+    payload: jsonb('payload').notNull().default({}),
+    updatedByUserId: uuid('updated_by_user_id'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+);

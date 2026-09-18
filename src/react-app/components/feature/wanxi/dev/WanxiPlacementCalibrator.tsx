@@ -3,7 +3,11 @@ import { InkButton } from '@app/components/ui/InkButton';
 import { InkInput } from '@app/components/ui/InkInput';
 import { InkSelect } from '@app/components/ui/InkSelect';
 import {
-  WANXI_DEFAULT_NPC_PLACEMENTS,
+  fetchWanxiMapEditorState,
+  resetWanxiMapEditorState,
+  saveWanxiMapEditorState,
+} from '@app/components/feature/wanxi/wanxiMapEditorApi';
+import {
   WANXI_LOCATION_PLACEMENTS,
   WANXI_LOCATIONS,
   WANXI_MAIN_SCENE,
@@ -11,14 +15,15 @@ import {
   WANXI_REGIONS,
   getWanxiLocation,
   getWanxiNpcById,
-} from '@shared/engine/wanxi/definitions';
+  isWanxiLegacyNpcRoleKey,
+} from '@shared/engine/wanxi';
 import {
+  assessWanxiPlacementSafety,
   validateWanxiMapCalibration,
   wanxiPercentToPixel,
   wanxiPixelToPercent,
-  wanxiPointInPolygon,
   type WanxiBlockedZoneType,
-  type WanxiCalibrationSlot,
+  type WanxiCalibrationNpcPlacement,
   type WanxiCalibrationZone,
   type WanxiMapCalibrationDraft,
   type WanxiPixelPoint,
@@ -32,61 +37,24 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 
-const STORAGE_KEY = 'wanxi:map-calibrator:v1';
 const MAP_WIDTH = WANXI_MAIN_SCENE.logicalSize.width;
 const MAP_HEIGHT = WANXI_MAIN_SCENE.logicalSize.height;
 
-type CalibratorMode = 'inspect' | 'blocked' | 'safe' | 'slot';
-type OverlayScope = 'current' | 'all';
+type EditorMode = 'npc' | 'blocked' | 'safe' | 'inspect';
+type DrawShape = 'freehand' | 'rectangle';
 
-interface ModeMeta {
-  title: string;
-  short: string;
-  description: string;
-  action: string;
-  toneClass: string;
-  borderClass: string;
-  badgeClass: string;
+interface DraggingNpc {
+  npcId: string;
+  point: WanxiPixelPoint | null;
+  original: WanxiCalibrationNpcPlacement;
 }
 
-const MODE_META: Record<CalibratorMode, ModeMeta> = {
-  inspect: {
-    title: '查看坐标',
-    short: '查看',
-    description: '点击只读取坐标，不创建任何内容。',
-    action: '单击地图：读取像素坐标与百分比坐标。',
-    toneClass: 'text-ink',
-    borderClass: 'border-ink/25',
-    badgeClass: 'bg-ink/10 text-ink',
-  },
-  blocked: {
-    title: '1 · 绘制禁止区',
-    short: '禁止区',
-    description: '先圈水面、屋顶、植物和其他绝不能站人的区域。',
-    action: '单击：增加边界点 · 双击/Enter：完成 · 右键/Ctrl+Z：撤销一点。',
-    toneClass: 'text-red-800',
-    borderClass: 'border-red-700/45',
-    badgeClass: 'bg-red-700/10 text-red-800',
-  },
-  safe: {
-    title: '2 · 绘制可站区',
-    short: '可站区',
-    description: '再圈道路、广场、桥面、水榭平台等允许脚落地的位置。',
-    action: '单击：增加边界点 · 双击/Enter：完成 · 右键/Ctrl+Z：撤销一点。',
-    toneClass: 'text-emerald-800',
-    borderClass: 'border-emerald-700/45',
-    badgeClass: 'bg-emerald-700/10 text-emerald-800',
-  },
-  slot: {
-    title: '3 · 放置站位槽',
-    short: '站位槽',
-    description: '最后点击 NPC 双脚应该落下的位置，再保存 Slot。',
-    action: '单击地图：设置 NPC 脚下落点 · Enter：保存 Slot。',
-    toneClass: 'text-sky-800',
-    borderClass: 'border-sky-700/45',
-    badgeClass: 'bg-sky-700/10 text-sky-800',
-  },
-};
+interface DrawingZone {
+  kind: 'safe' | 'blocked';
+  shape: DrawShape;
+  start: WanxiPixelPoint;
+  points: WanxiPixelPoint[];
+}
 
 const BLOCKED_TYPE_LABELS: Record<WanxiBlockedZoneType, string> = {
   water: '水面',
@@ -98,69 +66,32 @@ const BLOCKED_TYPE_LABELS: Record<WanxiBlockedZoneType, string> = {
 
 const BLOCKED_TYPE_COLORS: Record<
   WanxiBlockedZoneType,
-  { fill: string; stroke: string; text: string }
+  { fill: string; stroke: string }
 > = {
-  water: {
-    fill: 'rgba(59,130,246,0.22)',
-    stroke: 'rgba(29,78,216,0.92)',
-    text: '#1d4ed8',
-  },
-  building: {
-    fill: 'rgba(249,115,22,0.22)',
-    stroke: 'rgba(194,65,12,0.92)',
-    text: '#c2410c',
-  },
-  vegetation: {
-    fill: 'rgba(132,204,22,0.22)',
-    stroke: 'rgba(77,124,15,0.92)',
-    text: '#4d7c0f',
-  },
-  decoration: {
-    fill: 'rgba(168,85,247,0.20)',
-    stroke: 'rgba(126,34,206,0.92)',
-    text: '#7e22ce',
-  },
-  other: {
-    fill: 'rgba(239,68,68,0.20)',
-    stroke: 'rgba(153,27,27,0.92)',
-    text: '#991b1b',
-  },
+  water: { fill: 'rgba(59,130,246,0.20)', stroke: '#1d4ed8' },
+  building: { fill: 'rgba(249,115,22,0.20)', stroke: '#c2410c' },
+  vegetation: { fill: 'rgba(132,204,22,0.20)', stroke: '#4d7c0f' },
+  decoration: { fill: 'rgba(168,85,247,0.20)', stroke: '#7e22ce' },
+  other: { fill: 'rgba(239,68,68,0.20)', stroke: '#991b1b' },
 };
 
-function createEmptyDraft(): WanxiMapCalibrationDraft {
+function cloneDraft(draft: WanxiMapCalibrationDraft) {
   return {
-    version: 1,
-    sceneId: 'wanxi_main',
-    logicalSize: { width: MAP_WIDTH, height: MAP_HEIGHT },
-    slots: [],
-    zones: [],
+    ...draft,
+    slots: draft.slots.map((item) => ({
+      ...item,
+      point: { ...item.point },
+      tags: item.tags ? [...item.tags] : undefined,
+    })),
+    zones: draft.zones.map((item) => ({
+      ...item,
+      polygon: item.polygon.map((point) => ({ ...point })),
+    })),
+    npcPlacements: draft.npcPlacements.map((item) => ({
+      ...item,
+      point: { ...item.point },
+    })),
   };
-}
-
-function loadDraft(): WanxiMapCalibrationDraft {
-  if (typeof window === 'undefined') return createEmptyDraft();
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createEmptyDraft();
-    const parsed = JSON.parse(raw) as Partial<WanxiMapCalibrationDraft>;
-    if (
-      parsed.version !== 1 ||
-      parsed.sceneId !== 'wanxi_main' ||
-      !Array.isArray(parsed.slots) ||
-      !Array.isArray(parsed.zones)
-    ) {
-      return createEmptyDraft();
-    }
-    return {
-      version: 1,
-      sceneId: 'wanxi_main',
-      logicalSize: { width: MAP_WIDTH, height: MAP_HEIGHT },
-      slots: parsed.slots,
-      zones: parsed.zones,
-    };
-  } catch {
-    return createEmptyDraft();
-  }
 }
 
 function cssPoint(point: WanxiPixelPoint) {
@@ -176,24 +107,13 @@ function pointLabel(point: WanxiPixelPoint | null) {
     width: MAP_WIDTH,
     height: MAP_HEIGHT,
   });
-  return `${point.x}, ${point.y} px  ·  ${percent.x.toFixed(4)}%, ${percent.y.toFixed(4)}%`;
+  return `${point.x}, ${point.y}px · ${percent.x.toFixed(3)}%, ${percent.y.toFixed(3)}%`;
 }
 
-function safeIdPart(value: string) {
-  return value.replace(/[^a-zA-Z0-9_-]/g, '_');
-}
-
-function nextSlotId(locationId: string, slots: readonly WanxiCalibrationSlot[]) {
-  const prefix = `${safeIdPart(locationId)}_slot_`;
-  let index = 1;
-  while (
-    slots.some(
-      (slot) => slot.id === `${prefix}${String(index).padStart(2, '0')}`,
-    )
-  ) {
-    index += 1;
-  }
-  return `${prefix}${String(index).padStart(2, '0')}`;
+function polygonPath(points: readonly WanxiPixelPoint[]) {
+  return points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
+    .join(' ');
 }
 
 function nextZoneId(
@@ -201,7 +121,7 @@ function nextZoneId(
   locationId: string,
   zones: readonly WanxiCalibrationZone[],
 ) {
-  const prefix = `${kind}.${safeIdPart(locationId)}.`;
+  const prefix = `${kind}.${locationId}.`;
   let index = 1;
   while (
     zones.some(
@@ -213,1056 +133,1244 @@ function nextZoneId(
   return `${prefix}${String(index).padStart(2, '0')}`;
 }
 
-function pointFromMouse(
-  event: ReactMouseEvent<HTMLDivElement>,
+function pointFromClient(
+  clientX: number,
+  clientY: number,
   surface: HTMLDivElement,
-): WanxiPixelPoint {
+): WanxiPixelPoint | null {
   const rect = surface.getBoundingClientRect();
-  const x = Math.round(((event.clientX - rect.left) / rect.width) * MAP_WIDTH);
-  const y = Math.round(((event.clientY - rect.top) / rect.height) * MAP_HEIGHT);
+  if (
+    clientX < rect.left ||
+    clientX > rect.right ||
+    clientY < rect.top ||
+    clientY > rect.bottom
+  ) {
+    return null;
+  }
   return {
-    x: Math.min(MAP_WIDTH, Math.max(0, x)),
-    y: Math.min(MAP_HEIGHT, Math.max(0, y)),
+    x: Math.round(((clientX - rect.left) / rect.width) * MAP_WIDTH),
+    y: Math.round(((clientY - rect.top) / rect.height) * MAP_HEIGHT),
   };
 }
 
-function polygonCenter(points: readonly WanxiPixelPoint[]): WanxiPixelPoint | null {
-  if (!points.length) return null;
-  const total = points.reduce(
-    (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
-    { x: 0, y: 0 },
-  );
-  return {
-    x: Math.round(total.x / points.length),
-    y: Math.round(total.y / points.length),
+function rectanglePoints(
+  start: WanxiPixelPoint,
+  end: WanxiPixelPoint,
+): WanxiPixelPoint[] {
+  return [
+    start,
+    { x: end.x, y: start.y },
+    end,
+    { x: start.x, y: end.y },
+  ];
+}
+
+function inferLocation(point: WanxiPixelPoint) {
+  let best:
+    | {
+        locationId: string;
+        regionId: WanxiRegionId;
+        distance: number;
+      }
+    | undefined;
+
+  for (const placement of WANXI_LOCATION_PLACEMENTS) {
+    const pixel = wanxiPercentToPixel(placement.point, {
+      width: MAP_WIDTH,
+      height: MAP_HEIGHT,
+    });
+    const location = getWanxiLocation(placement.locationId);
+    if (!location) continue;
+    const distance = Math.hypot(point.x - pixel.x, point.y - pixel.y);
+    if (!best || distance < best.distance) {
+      best = {
+        locationId: location.id,
+        regionId: location.regionId,
+        distance,
+      };
+    }
+  }
+
+  return best ?? {
+    locationId: 'central_square',
+    regionId: 'square' as const,
+    distance: 0,
   };
-}
-
-function NpcPreviewMarker(props: {
-  npcId: string;
-  point: WanxiPixelPoint;
-  muted?: boolean;
-  label?: string;
-}) {
-  const npc = getWanxiNpcById(props.npcId);
-  if (!npc) return null;
-  return (
-    <div
-      className={`pointer-events-none absolute z-40 -translate-x-1/2 -translate-y-full ${props.muted ? 'opacity-45' : ''}`}
-      style={cssPoint(props.point)}
-    >
-      <div className="relative flex flex-col items-center">
-        <div className="font-heading border-ink/30 bg-bgpaper/95 text-ink flex size-9 items-center justify-center rounded-full border text-base shadow-[0_4px_14px_rgba(44,24,16,0.18)]">
-          {npc.sigil}
-        </div>
-        <div className="bg-bgpaper/95 text-ink mt-1 whitespace-nowrap px-1.5 py-0.5 text-[11px] shadow-sm">
-          {props.label ?? npc.name}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ModeButton(props: {
-  mode: CalibratorMode;
-  active: boolean;
-  onClick(): void;
-}) {
-  const meta = MODE_META[props.mode];
-  return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      className={`w-full border px-3 py-3 text-left transition-colors ${
-        props.active
-          ? `${meta.borderClass} bg-bgpaper shadow-sm`
-          : 'border-ink/10 bg-paper/45 hover:border-ink/25 hover:bg-bgpaper/75'
-      }`}
-    >
-      <div className="flex items-start gap-2.5">
-        <span
-          className={`mt-0.5 inline-flex min-w-14 justify-center px-2 py-1 text-[11px] font-semibold ${meta.badgeClass}`}
-        >
-          {meta.short}
-        </span>
-        <div className="min-w-0">
-          <p className={`text-sm font-semibold ${props.active ? meta.toneClass : 'text-ink'}`}>
-            {meta.title}
-          </p>
-          <p className="text-ink-secondary mt-1 text-xs leading-5">
-            {meta.description}
-          </p>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function ZoneLegend() {
-  return (
-    <div className="space-y-1.5 text-xs">
-      <p className="text-ink font-semibold">图层颜色</p>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-ink-secondary">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-3 border border-emerald-700/60 bg-emerald-500/20" />
-          可站区
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-3 border border-blue-700/60 bg-blue-500/20" />
-          水面
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-3 border border-orange-700/60 bg-orange-500/20" />
-          建筑
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-3 border border-lime-700/60 bg-lime-500/20" />
-          植物
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-3 border border-purple-700/60 bg-purple-500/20" />
-          装饰物
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="size-3 rounded-full border-2 border-sky-700 bg-sky-500/60" />
-          Slot
-        </span>
-      </div>
-    </div>
-  );
 }
 
 function zoneVisual(zone: WanxiCalibrationZone) {
   if (zone.kind === 'safe') {
-    return {
-      fill: 'rgba(16,185,129,0.18)',
-      stroke: 'rgba(4,120,87,0.92)',
-      text: '#047857',
-    };
+    return { fill: 'rgba(16,185,129,0.18)', stroke: '#047857' };
   }
   return BLOCKED_TYPE_COLORS[zone.blockedType ?? 'other'];
 }
 
+function NpcMarker(props: {
+  placement: WanxiCalibrationNpcPlacement;
+  selected: boolean;
+  showNames: boolean;
+  issueCodes: readonly string[];
+  onMouseDown(event: ReactMouseEvent<HTMLButtonElement>): void;
+  onClick(): void;
+}) {
+  const npc = getWanxiNpcById(props.placement.npcId);
+  if (!npc) return null;
+
+  const blocked = props.issueCodes.includes('NPC_INSIDE_BLOCKED_ZONE');
+  const crowded = props.issueCodes.includes('NPCS_TOO_CLOSE');
+
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      onMouseDown={props.onMouseDown}
+      className="group absolute z-40 -translate-x-1/2 -translate-y-full"
+      style={cssPoint(props.placement.point)}
+      title={`${npc.name} · ${pointLabel(props.placement.point)}`}
+    >
+      <span className="relative flex flex-col items-center">
+        <span
+          className={`font-heading flex size-10 items-center justify-center rounded-full border shadow-[0_4px_14px_rgba(44,24,16,0.18)] ${
+            blocked
+              ? 'border-red-700 bg-red-700 text-white'
+              : crowded
+                ? 'border-amber-700 bg-amber-50 text-amber-900'
+                : props.placement.runtimeVisible
+                  ? 'border-crimson/45 bg-bgpaper text-crimson'
+                  : 'border-ink/30 bg-bgpaper text-ink'
+          } ${props.selected ? 'ring-4 ring-crimson/20' : ''}`}
+        >
+          {npc.sigil}
+          {props.placement.locked ? (
+            <span className="border-bgpaper bg-ink text-bgpaper absolute -top-1 -right-1 rounded px-1 text-[8px]">
+              锁
+            </span>
+          ) : null}
+        </span>
+        {props.showNames ? (
+          <span
+            className={`mt-1 whitespace-nowrap border px-1.5 py-0.5 text-[11px] shadow-sm ${
+              blocked
+                ? 'border-red-700/30 bg-red-50 text-red-900'
+                : crowded
+                  ? 'border-amber-700/30 bg-amber-50 text-amber-900'
+                  : 'border-ink/15 bg-bgpaper/95 text-ink'
+            }`}
+          >
+            {npc.name}
+          </span>
+        ) : null}
+      </span>
+    </button>
+  );
+}
+
 export function WanxiPlacementCalibrator() {
-  const mapSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const mapViewportRef = useRef<HTMLDivElement | null>(null);
-  const [draft, setDraft] = useState<WanxiMapCalibrationDraft>(loadDraft);
-  const [mode, setMode] = useState<CalibratorMode>('inspect');
-  const [zoom, setZoom] = useState(0.5);
-  const [cursor, setCursor] = useState<WanxiPixelPoint | null>(null);
-  const [hoverPoint, setHoverPoint] = useState<WanxiPixelPoint | null>(null);
-  const [pendingPolygon, setPendingPolygon] = useState<WanxiPixelPoint[]>([]);
-  const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
-  const [selectedRegionId, setSelectedRegionId] = useState<WanxiRegionId>('square');
-  const [selectedLocationId, setSelectedLocationId] = useState('central_square');
-  const [selectedNpcId, setSelectedNpcId] = useState(WANXI_NPCS[0]?.id ?? '');
-  const [slotId, setSlotId] = useState('');
-  const [slotLabel, setSlotLabel] = useState('');
-  const [slotTags, setSlotTags] = useState('');
-  const [zoneId, setZoneId] = useState('');
-  const [zoneNote, setZoneNote] = useState('');
-  const [blockedType, setBlockedType] = useState<WanxiBlockedZoneType>('water');
-  const [showGrid, setShowGrid] = useState(true);
-  const [gridSize, setGridSize] = useState(100);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const historyRef = useRef<WanxiMapCalibrationDraft[]>([]);
+  const redoRef = useRef<WanxiMapCalibrationDraft[]>([]);
+  const saveTimerRef = useRef<number | null>(null);
+  const savingRef = useRef(false);
+  const pendingSaveRef = useRef<WanxiMapCalibrationDraft | null>(null);
+
+  const [draft, setDraft] = useState<WanxiMapCalibrationDraft | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+
+  const [mode, setMode] = useState<EditorMode>('npc');
+  const [drawShape, setDrawShape] = useState<DrawShape>('freehand');
+  const [blockedType, setBlockedType] =
+    useState<WanxiBlockedZoneType>('water');
+  const [zoom, setZoom] = useState(0.55);
+  const [showGrid, setShowGrid] = useState(false);
   const [showLocations, setShowLocations] = useState(true);
-  const [showLegacyNpc, setShowLegacyNpc] = useState(false);
-  const [showZoneLabels, setShowZoneLabels] = useState(true);
-  const [overlayScope, setOverlayScope] = useState<OverlayScope>('current');
-  const [importText, setImportText] = useState('');
-  const [status, setStatus] = useState('建议先圈禁止区，再圈可站区，最后放置 Slot。');
+  const [showNames, setShowNames] = useState(true);
+  const [showZones, setShowZones] = useState(true);
+  const [selectedNpcId, setSelectedNpcId] = useState('');
+  const [search, setSearch] = useState('');
+  const [cursorPoint, setCursorPoint] = useState<WanxiPixelPoint | null>(null);
+  const [draggingNpc, setDraggingNpc] = useState<DraggingNpc | null>(null);
+  const [drawingZone, setDrawingZone] = useState<DrawingZone | null>(null);
+  const [status, setStatus] = useState('正在读取数据库中的地图配置……');
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
-  }, [draft]);
+    let cancelled = false;
+    void fetchWanxiMapEditorState()
+      .then((snapshot) => {
+        if (cancelled) return;
+        setDraft(snapshot.state);
+        setRevision(snapshot.revision);
+        setLastSavedAt(snapshot.updatedAt);
+        setSelectedNpcId(snapshot.state.npcPlacements[0]?.npcId ?? '');
+        setStatus(
+          `已从数据库载入 ${snapshot.state.npcPlacements.length} 个 NPC。直接拖动人物即可。`,
+        );
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setLoadError(
+          error instanceof Error ? error.message : '地图配置读取失败',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const locationsForRegion = useMemo(
-    () => WANXI_LOCATIONS.filter((location) => location.regionId === selectedRegionId),
-    [selectedRegionId],
+  const issues = useMemo(
+    () => (draft ? validateWanxiMapCalibration(draft) : []),
+    [draft],
   );
 
-  const issues = useMemo(() => validateWanxiMapCalibration(draft), [draft]);
-  const errors = issues.filter((issue) => issue.level === 'error');
-  const warnings = issues.filter((issue) => issue.level === 'warning');
+  const issueCodesByNpc = useMemo(() => {
+    const result = new Map<string, string[]>();
+    if (!draft) return result;
 
-  const currentLocationSlots = useMemo(
-    () => draft.slots.filter((slot) => slot.locationId === selectedLocationId),
-    [draft.slots, selectedLocationId],
+    for (const placement of draft.npcPlacements) {
+      result.set(placement.npcId, []);
+    }
+    for (const issue of issues) {
+      if (!issue.entityId) continue;
+      const ids = issue.entityId.split(',');
+      for (const id of ids) {
+        if (!result.has(id)) continue;
+        result.get(id)?.push(issue.code);
+      }
+    }
+    return result;
+  }, [draft, issues]);
+
+  const selectedPlacement = useMemo(
+    () =>
+      draft?.npcPlacements.find(
+        (placement) => placement.npcId === selectedNpcId,
+      ) ?? null,
+    [draft, selectedNpcId],
   );
-  const currentLocationZones = useMemo(
-    () => draft.zones.filter((zone) => zone.locationId === selectedLocationId),
-    [draft.zones, selectedLocationId],
-  );
 
-  const visibleSlots =
-    overlayScope === 'all' ? draft.slots : currentLocationSlots;
-  const visibleZones =
-    overlayScope === 'all' ? draft.zones : currentLocationZones;
+  const selectedNpc = selectedPlacement
+    ? getWanxiNpcById(selectedPlacement.npcId)
+    : null;
 
-  const currentLocationPlacement = WANXI_LOCATION_PLACEMENTS.find(
-    (placement) => placement.locationId === selectedLocationId,
-  );
+  const selectedSafety =
+    draft && selectedPlacement
+      ? assessWanxiPlacementSafety(
+          selectedPlacement.point,
+          selectedPlacement.regionId,
+          selectedPlacement.locationId,
+          draft.zones,
+        )
+      : null;
 
-  const cursorSafety = useMemo(() => {
-    if (!cursor) return null;
-    const localSafeZones = draft.zones.filter(
-      (zone) =>
-        zone.kind === 'safe' &&
-        zone.regionId === selectedRegionId &&
-        (!zone.locationId || zone.locationId === selectedLocationId),
-    );
-    const blocked = draft.zones.find(
-      (zone) =>
-        zone.kind === 'blocked' && wanxiPointInPolygon(cursor, zone.polygon),
-    );
-    if (blocked) {
-      return {
-        level: 'error' as const,
-        text: `禁止落点：位于 ${blocked.id}${
-          blocked.blockedType ? ` · ${BLOCKED_TYPE_LABELS[blocked.blockedType]}` : ''
-        }`,
-      };
-    }
-    if (
-      localSafeZones.length > 0 &&
-      !localSafeZones.some((zone) => wanxiPointInPolygon(cursor, zone.polygon))
-    ) {
-      return {
-        level: 'error' as const,
-        text: '禁止落点：不在当前 Location 的可站区内。',
-      };
-    }
-    if (localSafeZones.length === 0) {
-      return {
-        level: 'warning' as const,
-        text: '未校验：当前 Location 还没有 Safe Zone。',
-      };
-    }
-    return { level: 'ok' as const, text: '合法落点：位于 Safe Zone，且未进入禁止区。' };
-  }, [cursor, draft.zones, selectedLocationId, selectedRegionId]);
-
-  function changeMode(next: CalibratorMode) {
-    if (next !== mode && pendingPolygon.length > 0) {
-      setStatus('已取消未完成的多边形。');
-    }
-    setMode(next);
-    setPendingPolygon([]);
-    setEditingZoneId(null);
-    setZoneId('');
-    setZoneNote('');
-    if (next !== 'slot') {
-      setSlotId('');
-      setSlotLabel('');
-      setSlotTags('');
-    }
-  }
-
-  function setLocation(locationId: string) {
-    const location = getWanxiLocation(locationId);
-    if (!location) return;
-    setSelectedLocationId(locationId);
-    setSelectedRegionId(location.regionId);
-    setSlotId('');
-    setZoneId('');
-    setPendingPolygon([]);
-    setEditingZoneId(null);
-    setStatus(`已切换到 ${location.name}。`);
-  }
-
-  function setRegion(regionId: WanxiRegionId) {
-    setSelectedRegionId(regionId);
-    const first = WANXI_LOCATIONS.find((location) => location.regionId === regionId);
-    if (first) setLocation(first.id);
-  }
-
-  function focusCurrentLocation() {
-    const viewport = mapViewportRef.current;
-    if (!viewport || !currentLocationPlacement) return;
-    const pixel = wanxiPercentToPixel(currentLocationPlacement.point, {
-      width: MAP_WIDTH,
-      height: MAP_HEIGHT,
+  const filteredNpcs = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!draft) return [];
+    return WANXI_NPCS.filter((npc) => {
+      if (!term) return true;
+      return (
+        npc.name.includes(term) ||
+        npc.identity.includes(term) ||
+        npc.roleKey.toLowerCase().includes(term)
+      );
     });
+  }, [draft, search]);
+
+  async function persist(nextDraft: WanxiMapCalibrationDraft) {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    pendingSaveRef.current = cloneDraft(nextDraft);
+    setDirty(true);
+
+    if (savingRef.current) return;
+
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      let latestRevision = revision;
+      let latestUpdatedAt = lastSavedAt;
+      while (pendingSaveRef.current) {
+        const target = pendingSaveRef.current;
+        pendingSaveRef.current = null;
+        const snapshot = await saveWanxiMapEditorState(target);
+        latestRevision = snapshot.revision;
+        latestUpdatedAt = snapshot.updatedAt;
+        setRevision(snapshot.revision);
+        setLastSavedAt(snapshot.updatedAt);
+      }
+      setDirty(false);
+      setStatus(
+        `已保存到数据库 · revision ${latestRevision}。正式万戏坊运行时会读取这份坐标。`,
+      );
+      if (latestUpdatedAt) setLastSavedAt(latestUpdatedAt);
+    } catch (error) {
+      pendingSaveRef.current = null;
+      setDirty(true);
+      setStatus(
+        error instanceof Error ? `保存失败：${error.message}` : '保存失败',
+      );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+
+  function scheduleSave(nextDraft: WanxiMapCalibrationDraft) {
+    setDirty(true);
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+    }
+    saveTimerRef.current = window.setTimeout(() => {
+      void persist(nextDraft);
+    }, 700);
+  }
+
+  function commit(
+    updater:
+      | WanxiMapCalibrationDraft
+      | ((current: WanxiMapCalibrationDraft) => WanxiMapCalibrationDraft),
+    message?: string,
+  ) {
+    setDraft((current) => {
+      if (!current) return current;
+      const next =
+        typeof updater === 'function' ? updater(current) : updater;
+      historyRef.current.push(cloneDraft(current));
+      if (historyRef.current.length > 80) historyRef.current.shift();
+      redoRef.current = [];
+      scheduleSave(next);
+      return next;
+    });
+    if (message) setStatus(message);
+  }
+
+  function undo() {
+    if (!draft || historyRef.current.length === 0) return;
+    const previous = historyRef.current.pop();
+    if (!previous) return;
+    redoRef.current.push(cloneDraft(draft));
+    setDraft(previous);
+    scheduleSave(previous);
+    setStatus('已撤销上一步。');
+  }
+
+  function redo() {
+    if (!draft || redoRef.current.length === 0) return;
+    const next = redoRef.current.pop();
+    if (!next) return;
+    historyRef.current.push(cloneDraft(draft));
+    setDraft(next);
+    scheduleSave(next);
+    setStatus('已恢复一步。');
+  }
+
+  function fitMap() {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const next = Math.min(
+      (viewport.clientWidth - 40) / MAP_WIDTH,
+      (viewport.clientHeight - 40) / MAP_HEIGHT,
+      1.2,
+    );
+    setZoom(Math.max(0.25, Number(next.toFixed(2))));
+    requestAnimationFrame(() =>
+      viewport.scrollTo({ left: 0, top: 0 }),
+    );
+  }
+
+  function centerPoint(point: WanxiPixelPoint) {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
     viewport.scrollTo({
-      left: Math.max(0, pixel.x * zoom - viewport.clientWidth / 2 + 32),
-      top: Math.max(0, pixel.y * zoom - viewport.clientHeight / 2 + 32),
+      left: Math.max(0, point.x * zoom - viewport.clientWidth / 2),
+      top: Math.max(0, point.y * zoom - viewport.clientHeight / 2),
       behavior: 'smooth',
     });
   }
 
-  function fitMap() {
-    const viewport = mapViewportRef.current;
-    if (!viewport) return;
-    const usableWidth = Math.max(200, viewport.clientWidth - 64);
-    const usableHeight = Math.max(200, viewport.clientHeight - 64);
-    const next = Math.min(usableWidth / MAP_WIDTH, usableHeight / MAP_HEIGHT, 1.25);
-    setZoom(Math.max(0.2, Number(next.toFixed(2))));
-    requestAnimationFrame(() => viewport.scrollTo({ left: 0, top: 0 }));
+  function beginNpcDrag(
+    placement: WanxiCalibrationNpcPlacement,
+    event?: ReactMouseEvent,
+  ) {
+    if (placement.locked) {
+      setStatus('该 NPC 已锁定，请先解锁。');
+      return;
+    }
+    event?.preventDefault();
+    event?.stopPropagation();
+    setMode('npc');
+    setSelectedNpcId(placement.npcId);
+    setDraggingNpc({
+      npcId: placement.npcId,
+      point: placement.point,
+      original: placement,
+    });
+    setStatus('拖动人物到目标位置，松开鼠标会自动保存到数据库。');
   }
 
-  function onMapClick(event: ReactMouseEvent<HTMLDivElement>) {
-    if ((mode === 'safe' || mode === 'blocked') && event.detail > 1) return;
-    const surface = mapSurfaceRef.current;
+  function updateSelectedPlacement(
+    patch: Partial<WanxiCalibrationNpcPlacement>,
+  ) {
+    if (!draft || !selectedPlacement) return;
+    commit(
+      {
+        ...draft,
+        npcPlacements: draft.npcPlacements.map((item) =>
+          item.npcId === selectedPlacement.npcId
+            ? { ...item, ...patch }
+            : item,
+        ),
+      },
+      '人物属性已修改，正在保存……',
+    );
+  }
+
+  function onMapMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+    const surface = surfaceRef.current;
     if (!surface) return;
-    const point = pointFromMouse(event, surface);
-    setCursor(point);
+    const point = pointFromClient(event.clientX, event.clientY, surface);
+    if (!point) return;
+    setCursorPoint(point);
 
     if (mode === 'inspect') {
       setStatus(`坐标：${pointLabel(point)}`);
       return;
     }
 
-    if (mode === 'slot') {
-      if (!slotId) setSlotId(nextSlotId(selectedLocationId, draft.slots));
-      setStatus('已设置 NPC 脚下落点。确认安全状态后点击“保存 Slot”。');
-      return;
-    }
-
-    setPendingPolygon((current) => [...current, point]);
-    if (!zoneId) setZoneId(nextZoneId(mode, selectedLocationId, draft.zones));
-    setStatus(`已加入第 ${pendingPolygon.length + 1} 个边界点。`);
-  }
-
-  function onMapMove(event: ReactMouseEvent<HTMLDivElement>) {
-    const surface = mapSurfaceRef.current;
-    if (!surface) return;
-    setHoverPoint(pointFromMouse(event, surface));
-  }
-
-  function saveSlot() {
-    if (!cursor) {
-      setStatus('请先进入“站位槽”模式，再点击地图上的 NPC 脚下位置。');
-      return;
-    }
-    if (cursorSafety?.level === 'error') {
-      setStatus(`不能保存：${cursorSafety.text}`);
-      return;
-    }
-    const id = slotId.trim() || nextSlotId(selectedLocationId, draft.slots);
-    const slot: WanxiCalibrationSlot = {
-      id,
-      regionId: selectedRegionId,
-      locationId: selectedLocationId,
-      point: cursor,
-      ...(slotLabel.trim() ? { label: slotLabel.trim() } : {}),
-      ...(slotTags.trim()
-        ? {
-            tags: slotTags
-              .split(',')
-              .map((value) => value.trim())
-              .filter(Boolean),
-          }
-        : {}),
-    };
-    setDraft((current) => ({
-      ...current,
-      slots: [...current.slots.filter((item) => item.id !== id), slot],
-    }));
-    setSlotId('');
-    setSlotLabel('');
-    setSlotTags('');
-    setStatus(`已保存站位槽 ${id}。继续点击地图可放下一个 Slot。`);
-  }
-
-  function deleteSlot(id: string) {
-    setDraft((current) => ({
-      ...current,
-      slots: current.slots.filter((slot) => slot.id !== id),
-    }));
-    if (slotId === id) {
-      setSlotId('');
-      setSlotLabel('');
-      setSlotTags('');
-    }
-    setStatus(`已删除站位槽 ${id}。`);
-  }
-
-  function editSlot(slot: WanxiCalibrationSlot) {
-    changeMode('slot');
-    const location = slot.locationId ? getWanxiLocation(slot.locationId) : null;
-    if (location) {
-      setSelectedRegionId(location.regionId);
-      setSelectedLocationId(location.id);
-    } else {
-      setSelectedRegionId(slot.regionId);
-    }
-    setCursor(slot.point);
-    setSlotId(slot.id);
-    setSlotLabel(slot.label ?? '');
-    setSlotTags(slot.tags?.join(', ') ?? '');
-    setStatus(`正在编辑 ${slot.id}。点击地图可重新移动脚点。`);
-  }
-
-  function finishZone() {
-    if (mode !== 'safe' && mode !== 'blocked') return;
-    if (pendingPolygon.length < 3) {
-      setStatus('至少需要 3 个顶点才能完成区域。');
-      return;
-    }
-    const id = zoneId.trim() || nextZoneId(mode, selectedLocationId, draft.zones);
-    const zone: WanxiCalibrationZone = {
-      id,
-      kind: mode,
-      regionId: selectedRegionId,
-      locationId: selectedLocationId,
-      polygon: pendingPolygon,
-      ...(mode === 'blocked' ? { blockedType } : {}),
-      ...(zoneNote.trim() ? { note: zoneNote.trim() } : {}),
-    };
-    setDraft((current) => ({
-      ...current,
-      zones: [...current.zones.filter((item) => item.id !== id), zone],
-    }));
-    setPendingPolygon([]);
-    setEditingZoneId(null);
-    setZoneId('');
-    setZoneNote('');
-    setStatus(`已保存 ${mode === 'safe' ? '可站区' : '禁止区'} ${id}。`);
-  }
-
-  function cancelZoneDrawing() {
-    setPendingPolygon([]);
-    setEditingZoneId(null);
-    setZoneId('');
-    setZoneNote('');
-    setStatus('已取消当前多边形绘制。');
-  }
-
-  function deleteZone(id: string) {
-    setDraft((current) => ({
-      ...current,
-      zones: current.zones.filter((zone) => zone.id !== id),
-    }));
-    if (editingZoneId === id) cancelZoneDrawing();
-    setStatus(`已删除区域 ${id}。`);
-  }
-
-  function editZone(zone: WanxiCalibrationZone) {
-    changeMode(zone.kind);
-    const location = zone.locationId ? getWanxiLocation(zone.locationId) : null;
-    if (location) {
-      setSelectedRegionId(location.regionId);
-      setSelectedLocationId(location.id);
-    } else {
-      setSelectedRegionId(zone.regionId);
-    }
-    setPendingPolygon([...zone.polygon]);
-    setEditingZoneId(zone.id);
-    setZoneId(zone.id);
-    setZoneNote(zone.note ?? '');
-    if (zone.blockedType) setBlockedType(zone.blockedType);
-    setStatus(`正在重绘 ${zone.id}。可以继续加点、撤销，完成后会覆盖原区域。`);
-  }
-
-  function importLegacyNpcPlacements() {
-    const imported = WANXI_DEFAULT_NPC_PLACEMENTS.map((placement) => {
-      const npc = getWanxiNpcById(placement.npcId);
-      return {
-        id: `legacy.${placement.locationId ?? placement.regionId}.${npc?.roleKey ?? placement.npcId}`,
-        regionId: placement.regionId,
-        ...(placement.locationId ? { locationId: placement.locationId } : {}),
-        point: wanxiPercentToPixel(placement.point, {
-          width: MAP_WIDTH,
-          height: MAP_HEIGHT,
-        }),
-        label: `当前位置 · ${npc?.name ?? placement.npcId}`,
-        tags: ['legacy', 'needs-review'],
-      } satisfies WanxiCalibrationSlot;
-    });
-    setDraft((current) => {
-      const ids = new Set(imported.map((slot) => slot.id));
-      return {
-        ...current,
-        slots: [...current.slots.filter((slot) => !ids.has(slot.id)), ...imported],
-      };
-    });
-    setStatus(`已导入 ${imported.length} 个当前 NPC 点位。请逐个检查，不要直接视为合法 Slot。`);
-  }
-
-  function exportJson() {
-    return JSON.stringify(draft, null, 2);
-  }
-
-  async function copyExport(kind: 'json' | 'ts') {
-    const json = exportJson();
-    const text =
-      kind === 'json'
-        ? json
-        : `// Generated by Wanxi Map Calibrator V2 UI\nexport const WANXI_MAP_CALIBRATION_V1 = ${json} as const;\n`;
-    try {
-      await navigator.clipboard.writeText(text);
-      setStatus(kind === 'json' ? 'JSON 已复制。' : 'TypeScript 配置已复制。');
-    } catch {
-      setStatus('浏览器未允许剪贴板访问，请使用“下载 JSON”。');
-    }
-  }
-
-  function downloadJson() {
-    const blob = new Blob([exportJson()], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'wanxi-map-calibration-v1.json';
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setStatus('已生成 wanxi-map-calibration-v1.json。');
-  }
-
-  function importJson() {
-    try {
-      const parsed = JSON.parse(importText) as WanxiMapCalibrationDraft;
-      if (
-        parsed.version !== 1 ||
-        parsed.sceneId !== 'wanxi_main' ||
-        !Array.isArray(parsed.slots) ||
-        !Array.isArray(parsed.zones)
-      ) {
-        throw new Error('格式不是 Wanxi Map Calibration V1');
-      }
-      setDraft({
-        ...parsed,
-        logicalSize: { width: MAP_WIDTH, height: MAP_HEIGHT },
+    if (mode === 'blocked' || mode === 'safe') {
+      event.preventDefault();
+      setDrawingZone({
+        kind: mode,
+        shape: drawShape,
+        start: point,
+        points: [point],
       });
-      setPendingPolygon([]);
-      setEditingZoneId(null);
-      setStatus('JSON 已导入并写入本地草稿。');
-    } catch (error) {
-      setStatus(error instanceof Error ? `导入失败：${error.message}` : '导入失败。');
+      setStatus(
+        drawShape === 'rectangle'
+          ? '拖出矩形，松手保存。'
+          : '按住鼠标沿边界描一圈，松手保存。',
+      );
     }
-  }
-
-  function resetDraft() {
-    if (!window.confirm('确定清空当前全部站位槽和区域草稿吗？')) return;
-    setDraft(createEmptyDraft());
-    setCursor(null);
-    setPendingPolygon([]);
-    setEditingZoneId(null);
-    setSlotId('');
-    setZoneId('');
-    setStatus('草稿已清空。');
   }
 
   useEffect(() => {
+    function onMouseMove(event: MouseEvent) {
+      const surface = surfaceRef.current;
+      if (!surface) return;
+      const point = pointFromClient(event.clientX, event.clientY, surface);
+      if (point) setCursorPoint(point);
+
+      if (draggingNpc) {
+        setDraggingNpc((current) =>
+          current ? { ...current, point } : current,
+        );
+      }
+
+      if (drawingZone && point) {
+        setDrawingZone((current) => {
+          if (!current) return current;
+          if (current.shape === 'rectangle') {
+            return {
+              ...current,
+              points: rectanglePoints(current.start, point),
+            };
+          }
+          const last = current.points[current.points.length - 1];
+          if (!last) return current;
+          if (Math.hypot(point.x - last.x, point.y - last.y) < 12) {
+            return current;
+          }
+          return { ...current, points: [...current.points, point] };
+        });
+      }
+    }
+
+    function onMouseUp() {
+      if (draggingNpc && draft) {
+        const point = draggingNpc.point;
+        if (point) {
+          const inferred = inferLocation(point);
+          const next: WanxiCalibrationNpcPlacement = {
+            ...draggingNpc.original,
+            point,
+            regionId: inferred.regionId,
+            locationId: inferred.locationId,
+          };
+          commit(
+            {
+              ...draft,
+              npcPlacements: draft.npcPlacements.map((item) =>
+                item.npcId === next.npcId ? next : item,
+              ),
+            },
+            `${getWanxiNpcById(next.npcId)?.name ?? next.npcId} 已移动到 ${getWanxiLocation(inferred.locationId)?.name ?? inferred.locationId}，正在保存……`,
+          );
+        }
+        setDraggingNpc(null);
+      }
+
+      if (drawingZone && draft) {
+        const points = drawingZone.points;
+        if (points.length >= 3) {
+          const center =
+            points.reduce(
+              (sum, point) => ({
+                x: sum.x + point.x,
+                y: sum.y + point.y,
+              }),
+              { x: 0, y: 0 },
+            );
+          const middle = {
+            x: center.x / points.length,
+            y: center.y / points.length,
+          };
+          const inferred = inferLocation(middle);
+          const zone: WanxiCalibrationZone = {
+            id: nextZoneId(
+              drawingZone.kind,
+              inferred.locationId,
+              draft.zones,
+            ),
+            kind: drawingZone.kind,
+            regionId: inferred.regionId,
+            locationId: inferred.locationId,
+            polygon: points,
+            ...(drawingZone.kind === 'blocked'
+              ? { blockedType }
+              : {}),
+          };
+          commit(
+            {
+              ...draft,
+              zones: [...draft.zones, zone],
+            },
+            `已新增${zone.kind === 'safe' ? '可站区' : '禁止区'}，正在保存……`,
+          );
+        } else {
+          setStatus('区域过小，已取消。');
+        }
+        setDrawingZone(null);
+      }
+    }
+
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
-      const editingField =
+      const editing =
         target?.tagName === 'INPUT' ||
         target?.tagName === 'TEXTAREA' ||
         target?.tagName === 'SELECT';
 
       if (event.key === 'Escape') {
-        if (pendingPolygon.length) cancelZoneDrawing();
-        else if (mode !== 'inspect') changeMode('inspect');
+        setDraggingNpc(null);
+        setDrawingZone(null);
+        setStatus('已取消当前操作。');
+        return;
+      }
+      if (editing) return;
+
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        redo();
+        return;
+      }
+      if (event.ctrlKey && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        undo();
+        return;
+      }
+      if (event.ctrlKey && event.key.toLowerCase() === 's' && draft) {
+        event.preventDefault();
+        void persist(draft);
         return;
       }
 
-      if (editingField) return;
-
-      if (event.key === '1') changeMode('blocked');
-      if (event.key === '2') changeMode('safe');
-      if (event.key === '3') changeMode('slot');
-      if (event.key === '0') changeMode('inspect');
-
-      if (
-        (mode === 'safe' || mode === 'blocked') &&
-        (event.key === 'Backspace' || (event.ctrlKey && event.key.toLowerCase() === 'z'))
-      ) {
-        event.preventDefault();
-        setPendingPolygon((current) => current.slice(0, -1));
-      }
-
-      if (event.key === 'Enter') {
-        if (mode === 'safe' || mode === 'blocked') finishZone();
-        if (mode === 'slot') saveSlot();
-      }
+      if (event.key === '1') setMode('npc');
+      if (event.key === '2') setMode('blocked');
+      if (event.key === '3') setMode('safe');
+      if (event.key === '0') setMode('inspect');
     }
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  });
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [
+    blockedType,
+    draft,
+    draggingNpc,
+    drawingZone,
+    drawShape,
+  ]);
 
-  const modeMeta = MODE_META[mode];
-  const pendingPreviewPoints =
-    pendingPolygon.length && hoverPoint
-      ? [...pendingPolygon, hoverPoint]
-      : pendingPolygon;
+  async function resetToDefault() {
+    if (savingRef.current) {
+      setStatus('当前仍在保存，请等保存完成后再恢复默认位置。');
+      return;
+    }
+    if (!window.confirm('确定恢复全部 NPC 的初始摆放并清空区域标记吗？')) {
+      return;
+    }
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    pendingSaveRef.current = null;
+    setSaving(true);
+    try {
+      const snapshot = await resetWanxiMapEditorState();
+      historyRef.current = [];
+      redoRef.current = [];
+      setDraft(snapshot.state);
+      setRevision(snapshot.revision);
+      setLastSavedAt(snapshot.updatedAt);
+      setDirty(false);
+      setSelectedNpcId(snapshot.state.npcPlacements[0]?.npcId ?? '');
+      setStatus('已恢复默认地图配置，并保存到数据库。');
+    } catch (error) {
+      setStatus(
+        error instanceof Error ? `恢复失败：${error.message}` : '恢复失败',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  const mapCursorClass = mode === 'inspect' ? 'cursor-cell' : 'cursor-crosshair';
+  if (loading) {
+    return (
+      <div className="bg-paper flex h-full items-center justify-center">
+        <p className="text-ink-secondary">正在读取万戏坊地图配置……</p>
+      </div>
+    );
+  }
+
+  if (loadError || !draft) {
+    return (
+      <div className="bg-paper flex h-full items-center justify-center p-6">
+        <div className="border-ink/20 bg-bgpaper max-w-lg border p-5 text-center">
+          <p className="text-crimson font-semibold">地图编辑器无法读取数据库</p>
+          <p className="text-ink-secondary mt-2 text-sm leading-6">
+            {loadError ?? '未知错误'}
+          </p>
+          <p className="text-ink-secondary mt-2 text-xs">
+            请确认已执行数据库迁移，并且当前账号具有管理员权限；开发模式可直接使用。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const drawingPath = drawingZone ? polygonPath(drawingZone.points) : '';
+  const errorCount = issues.filter((issue) => issue.level === 'error').length;
+  const warningCount = issues.filter(
+    (issue) => issue.level === 'warning',
+  ).length;
 
   return (
     <div className="bg-paper flex h-full min-h-0 flex-col overflow-hidden">
       <header className="border-ink/15 bg-bgpaper/95 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-dashed px-3 py-2 md:px-4">
         <div>
-          <p className="text-ink text-sm font-semibold tracking-[0.08em]">万戏坊地图定位校准器 V2</p>
+          <p className="text-ink text-sm font-semibold tracking-[0.08em]">
+            万戏坊地图编辑器
+          </p>
           <p className="text-ink-secondary mt-0.5 text-xs">
-            数据格式仍为 V1 · 地图 {MAP_WIDTH} × {MAP_HEIGHT} · NPC 坐标统一表示双脚落点
+            全部 NPC 已默认载入 · 拖动即定位 · 自动保存数据库 · 正式场景读取保存结果
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <InkButton href="/game/wanxi">返回万戏坊</InkButton>
-          <InkButton variant="ghost" onClick={() => void copyExport('json')}>复制 JSON</InkButton>
-          <InkButton variant="ghost" onClick={() => void copyExport('ts')}>复制 TS</InkButton>
-          <InkButton variant="outline" onClick={downloadJson}>下载 JSON</InkButton>
+          <span
+            className={`text-xs ${
+              saving
+                ? 'text-amber-700'
+                : dirty
+                  ? 'text-crimson'
+                  : 'text-emerald-800'
+            }`}
+          >
+            {saving
+              ? '保存中…'
+              : dirty
+                ? '有未保存改动'
+                : `已保存 · r${revision}`}
+          </span>
+          <InkButton variant="primary" disabled={saving} onClick={() => void persist(draft)}>
+            立即保存
+          </InkButton>
+          <InkButton variant="ghost" disabled={!historyRef.current.length} onClick={undo}>
+            撤销
+          </InkButton>
+          <InkButton variant="ghost" disabled={!redoRef.current.length} onClick={redo}>
+            重做
+          </InkButton>
+          <InkButton href="/game/wanxi">查看正式万戏坊</InkButton>
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
-        <aside className="border-ink/15 bg-bgpaper shrink-0 overflow-y-auto border-b p-3 xl:w-[292px] xl:border-r xl:border-b-0">
-          <div className="space-y-5">
+      <div className="flex min-h-0 flex-1">
+        <aside className="border-ink/15 bg-bgpaper hidden w-[300px] shrink-0 overflow-y-auto border-r p-3 lg:block">
+          <div className="space-y-4">
             <section>
-              <p className="text-ink text-sm font-semibold">建议工作流</p>
-              <p className="text-ink-secondary mt-1 text-xs leading-5">
-                不要先放 NPC。先禁止区 → 可站区 → Slot，最后才绑定人物。
-              </p>
-              <div className="mt-3 space-y-2">
-                {(['inspect', 'blocked', 'safe', 'slot'] as const).map((item) => (
-                  <ModeButton
-                    key={item}
-                    mode={item}
-                    active={mode === item}
-                    onClick={() => changeMode(item)}
-                  />
+              <p className="text-ink text-sm font-semibold">操作模式</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {[
+                  ['npc', '1 · 拖 NPC'],
+                  ['blocked', '2 · 禁止区'],
+                  ['safe', '3 · 可站区'],
+                  ['inspect', '0 · 看坐标'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setMode(value as EditorMode)}
+                    className={`border px-2 py-2 text-xs ${
+                      mode === value
+                        ? 'border-crimson bg-bgpaper text-crimson'
+                        : 'border-ink/10 bg-paper/45 text-ink'
+                    }`}
+                  >
+                    {label}
+                  </button>
                 ))}
               </div>
               <p className="text-ink-secondary mt-2 text-[11px] leading-5">
-                快捷键：0 查看 · 1 禁止区 · 2 可站区 · 3 Slot · Esc 取消
+                默认就是拖 NPC。Safe Zone 不是必做项；水面、屋顶等禁止区用于校验。
               </p>
             </section>
 
-            <section className="border-ink/10 space-y-3 border-t pt-4">
-              <div>
-                <p className="text-ink text-sm font-semibold">当前地图位置</p>
-                <p className="text-ink-secondary mt-1 text-xs leading-5">
-                  所有新建区域和 Slot 都归属当前 Location。
-                </p>
-              </div>
-              <InkSelect
-                label="Region"
-                value={selectedRegionId}
-                onChange={(value) => setRegion(value as WanxiRegionId)}
-              >
-                {WANXI_REGIONS.map((region) => (
-                  <option key={region.id} value={region.id}>{region.name}</option>
-                ))}
-              </InkSelect>
-              <InkSelect
-                label="Location"
-                value={selectedLocationId}
-                onChange={setLocation}
-              >
-                {locationsForRegion.map((location) => (
-                  <option key={location.id} value={location.id}>{location.name}</option>
-                ))}
-              </InkSelect>
-              <div className="flex flex-wrap gap-2">
-                <InkButton variant="outline" onClick={focusCurrentLocation}>定位当前 Location</InkButton>
-                <InkButton variant="ghost" onClick={fitMap}>适应窗口</InkButton>
-              </div>
-            </section>
+            {mode === 'blocked' || mode === 'safe' ? (
+              <section className="border-ink/10 space-y-3 border-t pt-4">
+                <InkSelect
+                  label="绘制方式"
+                  value={drawShape}
+                  onChange={(value) => setDrawShape(value as DrawShape)}
+                >
+                  <option value="freehand">按住拖动自由描边</option>
+                  <option value="rectangle">按住拖出矩形</option>
+                </InkSelect>
+                {mode === 'blocked' ? (
+                  <InkSelect
+                    label="禁止区类型"
+                    value={blockedType}
+                    onChange={(value) =>
+                      setBlockedType(value as WanxiBlockedZoneType)
+                    }
+                  >
+                    {(Object.keys(
+                      BLOCKED_TYPE_LABELS,
+                    ) as WanxiBlockedZoneType[]).map((type) => (
+                      <option key={type} value={type}>
+                        {BLOCKED_TYPE_LABELS[type]}
+                      </option>
+                    ))}
+                  </InkSelect>
+                ) : null}
+              </section>
+            ) : null}
 
-            <section className="border-ink/10 space-y-3 border-t pt-4">
-              <p className="text-ink text-sm font-semibold">图层显示</p>
-              <div className="grid grid-cols-2 gap-2 text-xs text-ink-secondary">
-                <label className="inline-flex items-center gap-1.5">
-                  <input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} />
-                  网格
-                </label>
-                <label className="inline-flex items-center gap-1.5">
-                  <input type="checkbox" checked={showLocations} onChange={(event) => setShowLocations(event.target.checked)} />
-                  Location
-                </label>
-                <label className="inline-flex items-center gap-1.5">
-                  <input type="checkbox" checked={showLegacyNpc} onChange={(event) => setShowLegacyNpc(event.target.checked)} />
-                  旧 NPC
-                </label>
-                <label className="inline-flex items-center gap-1.5">
-                  <input type="checkbox" checked={showZoneLabels} onChange={(event) => setShowZoneLabels(event.target.checked)} />
-                  区域标签
-                </label>
+            <section className="border-ink/10 border-t pt-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-ink text-sm font-semibold">
+                  全部 NPC
+                </p>
+                <span className="text-ink-secondary text-xs">
+                  {draft.npcPlacements.length} 人
+                </span>
               </div>
-              <InkSelect label="覆盖范围" value={overlayScope} onChange={(value) => setOverlayScope(value as OverlayScope)}>
-                <option value="current">只显示当前 Location</option>
-                <option value="all">显示全图草稿</option>
-              </InkSelect>
-              <InkSelect label="网格间距" value={String(gridSize)} onChange={(value) => setGridSize(Number(value))}>
-                <option value="50">50 px</option>
-                <option value="100">100 px</option>
-                <option value="200">200 px</option>
-              </InkSelect>
-              <ZoneLegend />
+              <div className="mt-2">
+                <InkInput
+                  value={search}
+                  placeholder="搜索姓名 / 身份 / roleKey"
+                  onChange={setSearch}
+                />
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {filteredNpcs.map((npc) => {
+                  const placement = draft.npcPlacements.find(
+                    (item) => item.npcId === npc.id,
+                  );
+                  if (!placement) return null;
+                  const selected = selectedNpcId === npc.id;
+                  return (
+                    <button
+                      key={npc.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedNpcId(npc.id);
+                        centerPoint(placement.point);
+                      }}
+                      onMouseDown={(event) =>
+                        beginNpcDrag(placement, event)
+                      }
+                      className={`w-full border px-2 py-2 text-left ${
+                        selected
+                          ? 'border-crimson bg-bgpaper'
+                          : 'border-ink/10 bg-paper/40'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-ink truncate text-xs font-semibold">
+                            {npc.name} · {npc.identity}
+                          </p>
+                          <p className="text-ink-secondary mt-0.5 truncate text-[10px]">
+                            {getWanxiLocation(placement.locationId ?? '')?.name ??
+                              placement.locationId ??
+                              placement.regionId}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 px-1 py-0.5 text-[9px] ${
+                            isWanxiLegacyNpcRoleKey(npc.roleKey)
+                              ? 'bg-amber-100 text-amber-800'
+                              : placement.runtimeVisible
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-paper text-ink-secondary'
+                          }`}
+                        >
+                          {isWanxiLegacyNpcRoleKey(npc.roleKey)
+                            ? '历史'
+                            : placement.runtimeVisible
+                              ? '场景显示'
+                              : '已记录'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </section>
           </div>
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className={`border-b bg-bgpaper/92 px-3 py-2 ${modeMeta.borderClass}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className={`shrink-0 px-2 py-1 text-xs font-semibold ${modeMeta.badgeClass}`}>
-                  当前模式 · {modeMeta.short}
-                </span>
-                <p className={`min-w-0 text-xs leading-5 ${modeMeta.toneClass}`}>
-                  {modeMeta.action}
-                  {mode === 'blocked' ? ` 当前类型：${BLOCKED_TYPE_LABELS[blockedType]}` : ''}
-                </p>
-              </div>
-              <div className="text-ink-secondary flex items-center gap-2 text-xs">
-                <button type="button" onClick={() => setZoom((value) => Math.max(0.2, Number((value - 0.1).toFixed(2))))} className="hover:text-ink">−</button>
-                <span>{Math.round(zoom * 100)}%</span>
-                <button type="button" onClick={() => setZoom((value) => Math.min(1.5, Number((value + 0.1).toFixed(2))))} className="hover:text-ink">＋</button>
-              </div>
+        <section className="flex min-h-0 flex-1 flex-col">
+          <div className="border-ink/10 bg-bgpaper/90 flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2 text-xs">
+            <span className="text-ink font-semibold">
+              当前：
+              {mode === 'npc'
+                ? '拖动 NPC'
+                : mode === 'blocked'
+                  ? `绘制禁止区 · ${BLOCKED_TYPE_LABELS[blockedType]}`
+                  : mode === 'safe'
+                    ? '绘制可站区'
+                    : '查看坐标'}
+            </span>
+            <span className="text-ink-secondary">
+              鼠标 {pointLabel(cursorPoint)}
+            </span>
+            <div className="ml-auto flex flex-wrap items-center gap-3">
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={showNames}
+                  onChange={(event) => setShowNames(event.target.checked)}
+                />
+                NPC 名称
+              </label>
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={showLocations}
+                  onChange={(event) =>
+                    setShowLocations(event.target.checked)
+                  }
+                />
+                地点
+              </label>
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={showZones}
+                  onChange={(event) => setShowZones(event.target.checked)}
+                />
+                区域
+              </label>
+              <label className="inline-flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={showGrid}
+                  onChange={(event) => setShowGrid(event.target.checked)}
+                />
+                网格
+              </label>
+              <InkButton variant="ghost" onClick={fitMap}>
+                适应窗口
+              </InkButton>
             </div>
           </div>
 
           <div
-            ref={mapViewportRef}
-            className="min-h-0 flex-1 overflow-auto bg-[#d8d0c1] p-8"
+            ref={viewportRef}
+            className="min-h-0 flex-1 overflow-auto bg-paper p-4"
           >
             <div
-              ref={mapSurfaceRef}
-              onClick={onMapClick}
-              onDoubleClick={() => {
-                if ((mode === 'safe' || mode === 'blocked') && pendingPolygon.length >= 3) finishZone();
-              }}
-              onContextMenu={(event) => {
-                if (mode !== 'safe' && mode !== 'blocked') return;
-                event.preventDefault();
-                setPendingPolygon((current) => current.slice(0, -1));
-              }}
-              onMouseMove={onMapMove}
-              onMouseLeave={() => setHoverPoint(null)}
-              className={`relative isolate origin-top-left overflow-hidden shadow-[0_12px_40px_rgba(44,24,16,0.18)] ${mapCursorClass}`}
+              ref={surfaceRef}
+              onMouseDown={onMapMouseDown}
+              className={`relative mx-auto overflow-hidden border border-ink/10 bg-bgpaper shadow ${
+                mode === 'npc' ? 'cursor-default' : 'cursor-crosshair'
+              }`}
               style={{
-                width: `${MAP_WIDTH * zoom}px`,
-                height: `${MAP_HEIGHT * zoom}px`,
+                width: MAP_WIDTH * zoom,
+                height: MAP_HEIGHT * zoom,
+                backgroundImage: `url(${wanxiMapUrl})`,
+                backgroundSize: '100% 100%',
               }}
             >
-              <img
-                src={wanxiMapUrl}
-                alt="万戏坊地图校准底图"
-                draggable={false}
-                className="pointer-events-none absolute inset-0 h-full w-full select-none"
-              />
+              {showGrid ? (
+                <div
+                  className="pointer-events-none absolute inset-0 opacity-50"
+                  style={{
+                    backgroundImage:
+                      'linear-gradient(to right, rgba(44,24,16,0.10) 1px, transparent 1px), linear-gradient(to bottom, rgba(44,24,16,0.10) 1px, transparent 1px)',
+                    backgroundSize: `${100 * zoom}px ${100 * zoom}px`,
+                  }}
+                />
+              ) : null}
 
-              <svg
-                viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
-                preserveAspectRatio="none"
-                className="pointer-events-none absolute inset-0 z-10 h-full w-full"
-                aria-hidden="true"
-              >
-                {showGrid ? (
-                  <>
-                    <defs>
-                      <pattern id="wanxi-calibrator-grid-v2" width={gridSize} height={gridSize} patternUnits="userSpaceOnUse">
-                        <path d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`} fill="none" stroke="rgba(47,41,35,0.14)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-                      </pattern>
-                    </defs>
-                    <rect width={MAP_WIDTH} height={MAP_HEIGHT} fill="url(#wanxi-calibrator-grid-v2)" />
-                  </>
-                ) : null}
-
-                {visibleZones
-                  .filter((zone) => zone.id !== editingZoneId)
-                  .map((zone) => {
-                    const visual = zoneVisual(zone);
+              {showZones ? (
+                <svg
+                  viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                >
+                  {draft.zones.map((zone) => {
+                    const style = zoneVisual(zone);
                     return (
-                      <polygon
+                      <path
                         key={zone.id}
-                        points={zone.polygon.map((point) => `${point.x},${point.y}`).join(' ')}
-                        fill={visual.fill}
-                        stroke={visual.stroke}
-                        strokeWidth="3"
-                        vectorEffect="non-scaling-stroke"
+                        d={`${polygonPath(zone.polygon)} Z`}
+                        fill={style.fill}
+                        stroke={style.stroke}
+                        strokeWidth={4}
                       />
                     );
                   })}
-
-                {pendingPolygon.length ? (
-                  <>
-                    <polygon
-                      points={pendingPreviewPoints.map((point) => `${point.x},${point.y}`).join(' ')}
-                      fill={mode === 'safe' ? 'rgba(16,185,129,0.13)' : zoneVisual({ id: 'pending', kind: 'blocked', regionId: selectedRegionId, polygon: [], blockedType }).fill}
-                      stroke={mode === 'safe' ? 'rgba(4,120,87,0.98)' : BLOCKED_TYPE_COLORS[blockedType].stroke}
-                      strokeDasharray="12 8"
-                      strokeWidth="4"
-                      vectorEffect="non-scaling-stroke"
+                  {drawingZone?.points.length ? (
+                    <path
+                      d={`${polygonPath(drawingZone.points)} ${
+                        drawingZone.shape === 'rectangle' ? 'Z' : ''
+                      }`}
+                      fill={
+                        drawingZone.shape === 'rectangle'
+                          ? drawingZone.kind === 'safe'
+                            ? 'rgba(16,185,129,0.12)'
+                            : BLOCKED_TYPE_COLORS[blockedType].fill
+                          : 'none'
+                      }
+                      stroke={
+                        drawingZone.kind === 'safe'
+                          ? '#047857'
+                          : BLOCKED_TYPE_COLORS[blockedType].stroke
+                      }
+                      strokeWidth={5}
+                      strokeDasharray="10 8"
                     />
-                    {pendingPolygon.map((point, index) => (
-                      <g key={`${point.x}:${point.y}:${index}`}>
-                        <circle cx={point.x} cy={point.y} r="13" fill="rgba(248,243,230,0.96)" stroke={mode === 'safe' ? 'rgba(4,120,87,1)' : BLOCKED_TYPE_COLORS[blockedType].stroke} strokeWidth="3" vectorEffect="non-scaling-stroke" />
-                        <text x={point.x} y={point.y + 5} textAnchor="middle" fontSize="14" fontWeight="700" fill={mode === 'safe' ? '#047857' : BLOCKED_TYPE_COLORS[blockedType].text}>{index + 1}</text>
-                      </g>
-                    ))}
-                  </>
-                ) : null}
-              </svg>
-
-              {showZoneLabels
-                ? visibleZones
-                    .filter((zone) => zone.id !== editingZoneId)
-                    .map((zone) => {
-                      const center = polygonCenter(zone.polygon);
-                      if (!center) return null;
-                      const visual = zoneVisual(zone);
-                      return (
-                        <div key={`label:${zone.id}`} className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2" style={cssPoint(center)}>
-                          <div className="bg-bgpaper/92 border px-1.5 py-0.5 text-[10px] shadow-sm" style={{ borderColor: visual.stroke, color: visual.text }}>
-                            {zone.kind === 'safe' ? 'SAFE' : BLOCKED_TYPE_LABELS[zone.blockedType ?? 'other']} · {zone.id}
-                          </div>
-                        </div>
-                      );
-                    })
-                : null}
+                  ) : null}
+                </svg>
+              ) : null}
 
               {showLocations
                 ? WANXI_LOCATION_PLACEMENTS.map((placement) => {
-                    const point = wanxiPercentToPixel(placement.point, {
-                      width: MAP_WIDTH,
-                      height: MAP_HEIGHT,
-                    });
-                    const location = getWanxiLocation(placement.locationId);
-                    const selected = placement.locationId === selectedLocationId;
+                    const point = wanxiPercentToPixel(
+                      placement.point,
+                      WANXI_MAIN_SCENE.logicalSize,
+                    );
                     return (
                       <div
                         key={placement.locationId}
                         className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-1/2"
                         style={cssPoint(point)}
                       >
-                        <div className={`${selected ? 'border-crimson bg-bgpaper text-crimson ring-2 ring-crimson/20' : 'border-ink/45 bg-bgpaper/80 text-ink'} border px-1.5 py-0.5 text-[10px] shadow-sm`}>
-                          {location?.name ?? placement.locationId}
-                        </div>
+                        <span className="border-ink/30 bg-bgpaper/80 text-ink border px-1.5 py-0.5 text-[10px] shadow-sm">
+                          {getWanxiLocation(placement.locationId)?.name ??
+                            placement.locationId}
+                        </span>
                       </div>
                     );
                   })
                 : null}
 
-              {showLegacyNpc
-                ? WANXI_DEFAULT_NPC_PLACEMENTS.map((placement) => (
-                    <NpcPreviewMarker
-                      key={placement.npcId}
-                      npcId={placement.npcId}
-                      muted
-                      point={wanxiPercentToPixel(placement.point, {
-                        width: MAP_WIDTH,
-                        height: MAP_HEIGHT,
-                      })}
-                    />
-                  ))
-                : null}
-
-              {visibleSlots.map((slot) => {
-                const selected = slot.id === slotId;
-                return (
-                  <button
-                    key={slot.id}
-                    type="button"
-                    title={`${slot.id} · ${slot.point.x},${slot.point.y}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      editSlot(slot);
-                    }}
-                    className="group absolute z-30 -translate-x-1/2 -translate-y-1/2"
-                    style={cssPoint(slot.point)}
-                  >
-                    <span className={`${selected ? 'bg-crimson shadow-[0_0_0_4px_rgba(159,48,48,0.18)]' : 'bg-sky-600 shadow-[0_0_0_2px_rgba(3,105,161,0.35)]'} border-bgpaper block size-4 rounded-full border-2`} />
-                    <span className={`${selected ? 'block' : 'hidden group-hover:block'} bg-bgpaper/95 text-ink pointer-events-none absolute top-full left-1/2 mt-1 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 text-[10px] shadow-sm`}>
-                      {slot.label || slot.id}
-                    </span>
-                  </button>
-                );
-              })}
-
-              {cursor ? (
-                <div className="pointer-events-none absolute z-50 -translate-x-1/2 -translate-y-1/2" style={cssPoint(cursor)}>
-                  <div className="relative size-10">
-                    <span className={`${mode === 'slot' && cursorSafety?.level === 'error' ? 'bg-red-700' : mode === 'slot' && cursorSafety?.level === 'ok' ? 'bg-emerald-700' : 'bg-crimson'} absolute top-1/2 left-0 h-px w-full`} />
-                    <span className={`${mode === 'slot' && cursorSafety?.level === 'error' ? 'bg-red-700' : mode === 'slot' && cursorSafety?.level === 'ok' ? 'bg-emerald-700' : 'bg-crimson'} absolute top-0 left-1/2 h-full w-px`} />
-                    <span className={`${mode === 'slot' && cursorSafety?.level === 'error' ? 'border-red-700' : mode === 'slot' && cursorSafety?.level === 'ok' ? 'border-emerald-700' : 'border-crimson'} bg-bgpaper absolute top-1/2 left-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2`} />
-                  </div>
-                </div>
-              ) : null}
-
-              {mode === 'slot' && cursor && selectedNpcId ? (
-                <NpcPreviewMarker
-                  npcId={selectedNpcId}
-                  point={cursor}
-                  label={`${getWanxiNpcById(selectedNpcId)?.name ?? 'NPC'} · 预览`}
+              {draft.npcPlacements.map((placement) => (
+                <NpcMarker
+                  key={placement.npcId}
+                  placement={placement}
+                  selected={placement.npcId === selectedNpcId}
+                  showNames={showNames}
+                  issueCodes={
+                    issueCodesByNpc.get(placement.npcId) ?? []
+                  }
+                  onClick={() => setSelectedNpcId(placement.npcId)}
+                  onMouseDown={(event) =>
+                    beginNpcDrag(placement, event)
+                  }
                 />
+              ))}
+
+              {draggingNpc?.point ? (
+                <div
+                  className="pointer-events-none absolute z-50 -translate-x-1/2 -translate-y-full opacity-75"
+                  style={cssPoint(draggingNpc.point)}
+                >
+                  <span className="font-heading border-crimson bg-bgpaper text-crimson flex size-10 items-center justify-center rounded-full border-2">
+                    {getWanxiNpcById(draggingNpc.npcId)?.sigil ?? '?'}
+                  </span>
+                </div>
               ) : null}
             </div>
           </div>
 
-          <div className="border-ink/10 bg-bgpaper/95 flex shrink-0 flex-wrap items-center gap-x-5 gap-y-1 border-t px-3 py-2 text-xs">
-            <span className="text-ink-secondary">鼠标：{pointLabel(hoverPoint)}</span>
-            <span className="text-ink-secondary">选中：{pointLabel(cursor)}</span>
+          <div className="border-ink/10 bg-bgpaper/95 flex shrink-0 flex-wrap items-center gap-4 border-t px-3 py-2 text-xs">
             <span className="text-ink">{status}</span>
+            <span className="text-ink-secondary ml-auto">
+              错误 {errorCount} · 警告 {warningCount}
+              {lastSavedAt
+                ? ` · ${new Date(lastSavedAt).toLocaleTimeString()}`
+                : ''}
+            </span>
           </div>
         </section>
 
-        <aside className="border-ink/15 bg-bgpaper min-h-0 w-full shrink-0 overflow-y-auto border-t p-4 xl:w-[390px] xl:border-t-0 xl:border-l">
+        <aside className="border-ink/15 bg-bgpaper hidden w-[390px] shrink-0 overflow-y-auto border-l p-4 xl:block">
           <div className="space-y-5">
-            <section className={`border p-3 ${modeMeta.borderClass} bg-paper/40`}>
-              <p className={`text-sm font-semibold ${modeMeta.toneClass}`}>{modeMeta.title}</p>
-              <p className="text-ink-secondary mt-1 text-xs leading-5">{modeMeta.description}</p>
-              <p className="text-ink mt-2 text-xs leading-5">{modeMeta.action}</p>
-            </section>
-
-            {mode === 'inspect' ? (
-              <section className="space-y-3">
-                <p className="text-ink text-sm font-semibold">坐标检查</p>
-                <div className="border-ink/10 bg-paper/50 border p-3 text-xs leading-6">
-                  <p className="text-ink-secondary">最后点击</p>
-                  <p className="text-ink font-mono">{pointLabel(cursor)}</p>
-                  <p className="text-ink-secondary mt-2">当前 Location</p>
-                  <p className="text-ink">{getWanxiLocation(selectedLocationId)?.name ?? selectedLocationId}</p>
-                </div>
-                <p className="text-ink-secondary text-xs leading-5">
-                  查看模式绝不会新增 Slot 或区域。确认位置后再切到左侧对应工具。
+            {selectedPlacement && selectedNpc ? (
+              <section className="border-ink/10 border p-3">
+                <p className="text-ink text-sm font-semibold">
+                  {selectedNpc.name} · {selectedNpc.identity}
                 </p>
-              </section>
-            ) : null}
+                <p className="text-ink-secondary mt-1 text-xs">
+                  {selectedNpc.roleKey}
+                </p>
 
-            {mode === 'slot' ? (
-              <section className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-ink text-sm font-semibold">站位槽 Slot</p>
-                  <span className="text-ink-secondary text-xs">当前 Location：{currentLocationSlots.length}</span>
-                </div>
-                <InkSelect label="NPC真实标记预览" value={selectedNpcId} onChange={setSelectedNpcId}>
-                  {WANXI_NPCS.map((npc) => (
-                    <option key={npc.id} value={npc.id}>{npc.name} · {npc.identity}</option>
-                  ))}
-                </InkSelect>
-                <InkInput label="Slot ID" value={slotId} placeholder={nextSlotId(selectedLocationId, draft.slots)} onChange={setSlotId} />
-                <InkInput label="说明" value={slotLabel} placeholder="例如：水榭栏杆旁" onChange={setSlotLabel} />
-                <InkInput label="Tags（逗号分隔）" value={slotTags} placeholder="standing, quiet, social" onChange={setSlotTags} />
-                <div className="border-ink/10 border p-3 text-xs leading-5">
-                  <p className="text-ink-secondary">当前脚点</p>
-                  <p className="text-ink font-mono">{pointLabel(cursor)}</p>
-                  {cursorSafety ? (
-                    <p className={`mt-2 font-semibold ${cursorSafety.level === 'error' ? 'text-red-800' : cursorSafety.level === 'warning' ? 'text-amber-700' : 'text-emerald-800'}`}>
-                      {cursorSafety.text}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <InkButton variant="primary" disabled={!cursor || cursorSafety?.level === 'error'} onClick={saveSlot}>保存 Slot</InkButton>
-                  {slotId && draft.slots.some((slot) => slot.id === slotId) ? (
-                    <InkButton variant="ghost" onClick={() => deleteSlot(slotId)}>删除当前 Slot</InkButton>
-                  ) : null}
-                </div>
-                <InkButton variant="outline" onClick={importLegacyNpcPlacements}>导入旧 NPC 点位为待校准 Slot</InkButton>
-                {currentLocationSlots.length ? (
-                  <div className="space-y-1.5">
-                    {currentLocationSlots.map((slot) => (
-                      <div key={slot.id} className="border-ink/10 flex items-center justify-between gap-2 border-b py-1.5 text-xs">
-                        <button type="button" onClick={() => editSlot(slot)} className="text-ink min-w-0 text-left hover:text-crimson">
-                          <span className="block truncate">{slot.label || slot.id}</span>
-                          <span className="text-ink-secondary">{slot.point.x}, {slot.point.y}</span>
-                        </button>
-                        <button type="button" onClick={() => deleteSlot(slot.id)} className="text-ink-secondary hover:text-crimson">删除</button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-ink-secondary text-xs">当前 Location 还没有 Slot。</p>
-                )}
-              </section>
-            ) : null}
-
-            {mode === 'safe' || mode === 'blocked' ? (
-              <section className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-ink text-sm font-semibold">
-                    {mode === 'safe' ? '可站区域' : '禁止区域'}
+                <div className="mt-3 border-ink/10 border p-3 text-xs leading-6">
+                  <p className="text-ink-secondary">脚下坐标</p>
+                  <p className="text-ink font-mono">
+                    {pointLabel(selectedPlacement.point)}
                   </p>
-                  <span className="text-ink-secondary text-xs">已取 {pendingPolygon.length} 点</span>
+                  <p className="text-ink-secondary mt-2">安全检查</p>
+                  <p
+                    className={`font-semibold ${
+                      selectedSafety?.level === 'error'
+                        ? 'text-red-800'
+                        : selectedSafety?.level === 'warning'
+                          ? 'text-amber-800'
+                          : 'text-emerald-800'
+                    }`}
+                  >
+                    {selectedSafety?.message ?? '—'}
+                  </p>
                 </div>
-                {mode === 'blocked' ? (
-                  <InkSelect label="禁止区类型" value={blockedType} onChange={(value) => setBlockedType(value as WanxiBlockedZoneType)}>
-                    {(Object.keys(BLOCKED_TYPE_LABELS) as WanxiBlockedZoneType[]).map((type) => (
-                      <option key={type} value={type}>{BLOCKED_TYPE_LABELS[type]}</option>
+
+                <div className="mt-3 space-y-3">
+                  <InkSelect
+                    label="Region"
+                    value={selectedPlacement.regionId}
+                    onChange={(value) => {
+                      const regionId = value as WanxiRegionId;
+                      const firstLocation = WANXI_LOCATIONS.find(
+                        (location) => location.regionId === regionId,
+                      );
+                      updateSelectedPlacement({
+                        regionId,
+                        locationId: firstLocation?.id,
+                      });
+                    }}
+                  >
+                    {WANXI_REGIONS.map((region) => (
+                      <option key={region.id} value={region.id}>
+                        {region.name}
+                      </option>
                     ))}
                   </InkSelect>
-                ) : null}
-                <InkInput
-                  label="Zone ID"
-                  value={zoneId}
-                  placeholder={nextZoneId(mode, selectedLocationId, draft.zones)}
-                  onChange={setZoneId}
-                />
-                <InkInput label="备注" value={zoneNote} placeholder={mode === 'safe' ? '例如：石桥与水榭平台' : '例如：主湖水面'} onChange={setZoneNote} />
-                <div className="border-ink/10 bg-paper/45 border p-3 text-xs leading-5">
-                  <p className="text-ink font-semibold">怎么画</p>
-                  <p className="text-ink-secondary mt-1">沿边界连续单击。点错了可右键或 Ctrl+Z。最后双击或按 Enter 完成。</p>
-                  {editingZoneId ? <p className="text-crimson mt-2">正在重绘：{editingZoneId}</p> : null}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <InkButton variant="primary" disabled={pendingPolygon.length < 3} onClick={finishZone}>完成区域</InkButton>
-                  <InkButton variant="ghost" disabled={pendingPolygon.length === 0} onClick={() => setPendingPolygon((current) => current.slice(0, -1))}>撤销一点</InkButton>
-                  <InkButton variant="ghost" disabled={pendingPolygon.length === 0 && !editingZoneId} onClick={cancelZoneDrawing}>取消</InkButton>
-                </div>
-                <div className="space-y-1.5">
-                  {currentLocationZones
-                    .filter((zone) => zone.kind === mode)
-                    .map((zone) => (
-                      <div key={zone.id} className="border-ink/10 flex items-start justify-between gap-2 border-b py-1.5 text-xs">
-                        <button type="button" onClick={() => editZone(zone)} className="min-w-0 text-left hover:opacity-70">
-                          <span className={zone.kind === 'safe' ? 'text-emerald-800' : 'text-red-800'}>{zone.id}</span>
-                          <span className="text-ink-secondary block">{zone.polygon.length} 点{zone.blockedType ? ` · ${BLOCKED_TYPE_LABELS[zone.blockedType]}` : ''}</span>
-                        </button>
-                        <button type="button" onClick={() => deleteZone(zone.id)} className="text-ink-secondary hover:text-crimson">删除</button>
-                      </div>
+
+                  <InkSelect
+                    label="Location"
+                    value={selectedPlacement.locationId ?? ''}
+                    onChange={(value) => {
+                      const location = getWanxiLocation(value);
+                      if (!location) return;
+                      updateSelectedPlacement({
+                        locationId: location.id,
+                        regionId: location.regionId,
+                      });
+                    }}
+                  >
+                    {WANXI_LOCATIONS.filter(
+                      (location) =>
+                        location.regionId === selectedPlacement.regionId,
+                    ).map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
                     ))}
+                  </InkSelect>
+                </div>
+
+                <div className="mt-4 space-y-2 text-xs">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedPlacement.runtimeVisible}
+                      onChange={(event) =>
+                        updateSelectedPlacement({
+                          runtimeVisible: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>
+                      <span className="text-ink font-semibold">
+                        正式场景显示
+                      </span>
+                      <span className="text-ink-secondary block">
+                        打开后，该 NPC 会作为普通万戏坊基线人物出现；剧情仍可覆盖其位置。
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedPlacement.locked}
+                      onChange={(event) =>
+                        updateSelectedPlacement({
+                          locked: event.target.checked,
+                        })
+                      }
+                    />
+                    <span>
+                      <span className="text-ink font-semibold">锁定位置</span>
+                      <span className="text-ink-secondary block">
+                        防止误拖；不影响正式场景显示。
+                      </span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <InkButton
+                    variant="outline"
+                    onClick={() => centerPoint(selectedPlacement.point)}
+                  >
+                    定位人物
+                  </InkButton>
+                  <InkButton
+                    variant="ghost"
+                    onClick={() =>
+                      beginNpcDrag(selectedPlacement)
+                    }
+                  >
+                    拖动人物
+                  </InkButton>
                 </div>
               </section>
             ) : null}
 
-            <section className="border-ink/10 space-y-3 border-t pt-4">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-ink text-sm font-semibold">自动校验</p>
-                <span className="text-xs">
-                  <span className={errors.length ? 'text-crimson' : 'text-emerald-800'}>{errors.length} error</span>
-                  <span className="text-ink-secondary"> · {warnings.length} warning</span>
+            <section className="border-ink/10 border p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-ink text-sm font-semibold">
+                  禁止区 / 可站区
+                </p>
+                <span className="text-ink-secondary text-xs">
+                  {draft.zones.length}
                 </span>
               </div>
-              {issues.length === 0 ? (
-                <p className="text-emerald-800 text-xs leading-5">当前草稿没有发现越界、落入禁区或槽位过近问题。</p>
-              ) : (
-                <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
-                  {issues.map((issue, index) => (
-                    <button
-                      key={`${issue.code}:${issue.entityId ?? index}`}
-                      type="button"
-                      onClick={() => {
-                        if (!issue.entityId) return;
-                        const slot = draft.slots.find((item) => item.id === issue.entityId);
-                        if (slot) editSlot(slot);
-                        const zone = draft.zones.find((item) => item.id === issue.entityId);
-                        if (zone) editZone(zone);
-                      }}
-                      className={`block w-full border-l-2 pl-2 text-left text-xs leading-5 ${issue.level === 'error' ? 'border-crimson text-crimson' : 'border-amber-600 text-amber-800'}`}
+              <p className="text-ink-secondary mt-1 text-xs leading-5">
+                不是必须先画。直接摆 NPC 即可；区域主要用于发现水面、屋顶等错误。
+              </p>
+              <div className="mt-3 max-h-64 space-y-1 overflow-auto">
+                {draft.zones.length ? (
+                  [...draft.zones].reverse().map((zone) => (
+                    <div
+                      key={zone.id}
+                      className="border-ink/10 flex items-center justify-between gap-2 border-b py-1.5 text-xs"
                     >
-                      <span className="font-semibold">{issue.code}</span>
-                      <span className="block">{issue.message}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+                      <div className="min-w-0">
+                        <p className="text-ink truncate">{zone.id}</p>
+                        <p className="text-ink-secondary">
+                          {zone.kind === 'safe'
+                            ? '可站区'
+                            : BLOCKED_TYPE_LABELS[
+                                zone.blockedType ?? 'other'
+                              ]}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-ink-secondary hover:text-crimson"
+                        onClick={() =>
+                          commit({
+                            ...draft,
+                            zones: draft.zones.filter(
+                              (item) => item.id !== zone.id,
+                            ),
+                          })
+                        }
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-ink-secondary text-xs">
+                    目前没有区域标记。
+                  </p>
+                )}
+              </div>
             </section>
 
-            <section className="border-ink/10 space-y-3 border-t pt-4">
-              <p className="text-ink text-sm font-semibold">导入 / 备份</p>
-              <textarea
-                value={importText}
-                onChange={(event) => setImportText(event.target.value)}
-                rows={5}
-                placeholder="粘贴此前导出的 wanxi-map-calibration-v1.json"
-                className="border-ink/20 bg-paper text-ink w-full resize-y border px-2 py-2 font-mono text-xs leading-5 outline-none focus:border-crimson/50"
-              />
-              <div className="flex flex-wrap gap-2">
-                <InkButton onClick={importJson}>导入 JSON</InkButton>
-                <InkButton variant="ghost" onClick={resetDraft}>清空草稿</InkButton>
+            <section className="border-ink/10 border p-3">
+              <p className="text-ink text-sm font-semibold">校验</p>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <div className="border-ink/10 border p-2">
+                  <p className="text-ink-secondary">错误</p>
+                  <p className="mt-1 text-lg font-semibold text-red-800">
+                    {errorCount}
+                  </p>
+                </div>
+                <div className="border-ink/10 border p-2">
+                  <p className="text-ink-secondary">警告</p>
+                  <p className="mt-1 text-lg font-semibold text-amber-800">
+                    {warningCount}
+                  </p>
+                </div>
               </div>
-              <p className="text-ink-secondary text-xs leading-5">
-                V2 只改编辑体验，仍使用 V1 JSON 数据格式和 localStorage 键，旧草稿不会丢失。
+              <div className="mt-3 max-h-52 space-y-1 overflow-auto text-xs">
+                {issues.slice(0, 30).map((issue, index) => (
+                  <div
+                    key={`${issue.code}-${index}`}
+                    className={
+                      issue.level === 'error'
+                        ? 'border-l-2 border-red-700 bg-red-50 px-2 py-1 text-red-900'
+                        : 'border-l-2 border-amber-600 bg-amber-50 px-2 py-1 text-amber-900'
+                    }
+                  >
+                    {issue.message}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="border-ink/10 border p-3">
+              <p className="text-ink text-sm font-semibold">维护</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <InkButton
+                  variant="ghost"
+                  disabled={saving}
+                  onClick={() => void resetToDefault()}
+                >
+                  恢复全部默认位置
+                </InkButton>
+              </div>
+              <p className="text-ink-secondary mt-2 text-[11px] leading-5">
+                Ctrl+S 立即保存 · Ctrl+Z 撤销 · Ctrl+Shift+Z 重做 · Esc 取消拖动/绘制
               </p>
             </section>
           </div>
