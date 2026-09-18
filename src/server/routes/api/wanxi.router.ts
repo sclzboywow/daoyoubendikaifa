@@ -31,6 +31,10 @@ import {
 } from '@server/lib/services/wanxi/WanxiNarrativeService';
 import { resolveWanxiSceneRuntimeSnapshot } from '@server/lib/services/wanxi/WanxiSceneService';
 import {
+  openWanxiWorldEncounter,
+  resolveWanxiWorldEncounter,
+} from '@server/lib/services/wanxi/WanxiWorldService';
+import {
   ensureWanxiSceneEditorSnapshot,
   persistWanxiSceneEditorState,
   resetWanxiSceneEditorState,
@@ -40,6 +44,12 @@ import {
   WanxiMapEditorSaveRequestSchema,
   type WanxiMapEditorSaveRequest,
 } from '@shared/contracts/wanxiMapEditor';
+import {
+  WanxiWorldEncounterRequestSchema,
+  WanxiWorldEncounterResolveSchema,
+  type WanxiWorldEncounterRequest,
+  type WanxiWorldEncounterResolveRequest,
+} from '@shared/contracts/wanxiWorld';
 import {
   WanxiCoreNpcRoleSchema,
   WanxiDailyEventRequestSchema,
@@ -210,6 +220,51 @@ router.post(
       return c.json(
         toPlayerStateMutationResponse(committed),
       );
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
+
+router.post(
+  '/world/encounter/open',
+  validateJson(WanxiWorldEncounterRequestSchema),
+  async (c) => {
+    try {
+      const active = actor(c);
+      const input = getValidatedJson<WanxiWorldEncounterRequest>(c);
+      return c.json({
+        success: true,
+        data: await openWanxiWorldEncounter({
+          cultivatorId: active.cultivatorId,
+          encounterId: input.encounterId,
+        }),
+      });
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
+
+router.post(
+  '/world/encounter/resolve',
+  validateJson(WanxiWorldEncounterResolveSchema),
+  async (c) => {
+    try {
+      const active = actor(c);
+      const input =
+        getValidatedJson<WanxiWorldEncounterResolveRequest>(c);
+      const committed = await resolveWanxiWorldEncounter({
+        userId: active.userId,
+        cultivatorId: active.cultivatorId,
+        encounterId: input.encounterId,
+        choiceId: input.choiceId,
+      });
+      const response = toPlayerStateMutationResponse(committed);
+      return c.json({
+        success: true,
+        data: response.data,
+      });
     } catch (error) {
       return errorResponse(c, error);
     }

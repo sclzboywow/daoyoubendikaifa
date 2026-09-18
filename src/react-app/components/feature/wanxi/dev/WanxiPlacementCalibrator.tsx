@@ -15,6 +15,7 @@ import {
   WANXI_REGIONS,
   getWanxiLocation,
   getWanxiNpcById,
+  isWanxiCoreNpcRoleKey,
   isWanxiLegacyNpcRoleKey,
 } from '@shared/engine/wanxi';
 import {
@@ -1220,6 +1221,11 @@ export function WanxiPlacementCalibrator() {
                     <input
                       type="checkbox"
                       checked={selectedPlacement.runtimeVisible}
+                      disabled={
+                        selectedNpc
+                          ? isWanxiCoreNpcRoleKey(selectedNpc.roleKey)
+                          : false
+                      }
                       onChange={(event) =>
                         updateSelectedPlacement({
                           runtimeVisible: event.target.checked,
@@ -1228,10 +1234,16 @@ export function WanxiPlacementCalibrator() {
                     />
                     <span>
                       <span className="text-ink font-semibold">
-                        正式场景显示
+                        {selectedNpc &&
+                        isWanxiCoreNpcRoleKey(selectedNpc.roleKey)
+                          ? '由出勤系统控制'
+                          : '正式场景显示'}
                       </span>
                       <span className="text-ink-secondary block">
-                        打开后，该 NPC 会作为普通万戏坊基线人物出现；剧情仍可覆盖其位置。
+                        {selectedNpc &&
+                        isWanxiCoreNpcRoleKey(selectedNpc.roleKey)
+                          ? '正式20人不再靠这个开关常驻；地图编辑器只负责保存本位坐标，实际出现时间由万戏坊出勤调度决定。'
+                          : '历史/试水角色仍可用此开关作为普通场景基线显隐。'}
                       </span>
                     </span>
                   </label>

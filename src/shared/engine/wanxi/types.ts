@@ -148,6 +148,53 @@ export interface WanxiNpcPlacement {
   marker?: WanxiMarkerPresentation;
 }
 
+
+export type WanxiPropCategory =
+  | 'world'
+  | 'memory'
+  | 'social'
+  | 'puzzle'
+  | 'activity';
+
+export interface WanxiPropDefinition {
+  id: string;
+  name: string;
+  category: WanxiPropCategory;
+  regionId: WanxiRegionId;
+  locationId: WanxiLocationId;
+  sigil: string;
+  description: string;
+  promptLabel: string;
+  relatedRoleKey?: WanxiNpcRoleKey;
+}
+
+export interface WanxiPropPlacement {
+  propId: string;
+  point: WanxiPoint;
+  marker?: WanxiMarkerPresentation;
+}
+
+export type WanxiPropRuntimeTone =
+  | 'normal'
+  | 'attention'
+  | 'disabled'
+  | 'hidden';
+
+export interface WanxiPropRuntimeState {
+  propId: string;
+  state: WanxiPropRuntimeTone;
+  badge?: string;
+}
+
+export type WanxiWorldDaypart = 'dawn' | 'day' | 'evening' | 'night';
+
+export interface WanxiWorldRuntimeSummary {
+  dateKey: string;
+  daypart: WanxiWorldDaypart;
+  activeEncounterIds: readonly string[];
+  storyStage: string;
+}
+
 export type WanxiActivityRef =
   | { type: 'game'; id: WanxiGameId }
   | { type: 'story'; id: string }
@@ -157,7 +204,8 @@ export type WanxiActivityRef =
 
 export type WanxiActivitySource =
   | { type: 'npc'; npcId: string }
-  | { type: 'location'; locationId: WanxiLocationId };
+  | { type: 'location'; locationId: WanxiLocationId }
+  | { type: 'prop'; propId: string };
 
 export interface WanxiActivityBinding {
   id: WanxiActivityId;
@@ -238,4 +286,6 @@ export interface WanxiSceneRuntimeSnapshot {
   npcPlacements: readonly WanxiNpcPlacement[];
   enabledActivityBindingIds: readonly WanxiActivityId[];
   locationStates: readonly WanxiLocationRuntimeState[];
+  propStates: readonly WanxiPropRuntimeState[];
+  world: WanxiWorldRuntimeSummary;
 }

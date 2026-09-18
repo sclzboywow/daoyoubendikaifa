@@ -11,6 +11,7 @@ import type {
   WanxiSceneDefinition,
   WanxiSceneLabelDefinition,
 } from './types';
+import { WANXI_WORLD_ACTIVITY_BINDINGS } from './world';
 
 export const WANXI_REGIONS = [
   {
@@ -800,6 +801,7 @@ export const WANXI_ACTIVITY_BINDINGS = [
     priority: 5,
     label: '听他们把旧事说完',
   },
+  ...WANXI_WORLD_ACTIVITY_BINDINGS,
 ] as const satisfies readonly WanxiActivityBinding[];
 
 /** Concrete mini-games are intentionally empty in V1; new games register here. */
@@ -859,15 +861,25 @@ export function getWanxiBindingsForLocation(locationId: string) {
   ).sort((a, b) => a.priority - b.priority);
 }
 
+export function getWanxiBindingsForProp(propId: string) {
+  return WANXI_ACTIVITY_BINDINGS.filter(
+    (binding) =>
+      binding.source.type === 'prop' &&
+      binding.source.propId === propId,
+  ).sort((a, b) => a.priority - b.priority);
+}
+
 export function getWanxiEnabledBindings(args: {
   npcId?: string;
   locationId?: string | null;
+  propId?: string;
   enabledIds: readonly string[];
 }) {
   const enabled = new Set(args.enabledIds);
   const bindings = [
     ...(args.npcId ? getWanxiBindingsForNpc(args.npcId) : []),
     ...(args.locationId ? getWanxiBindingsForLocation(args.locationId) : []),
+    ...(args.propId ? getWanxiBindingsForProp(args.propId) : []),
   ].filter((binding) => enabled.has(binding.id));
 
   const seen = new Set<string>();

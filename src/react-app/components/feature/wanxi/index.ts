@@ -1,3 +1,5 @@
+export { WanxiPropDetailDrawer } from './WanxiPropDetailDrawer';
+export { WanxiWorldEncounterDrawer } from './WanxiWorldEncounterDrawer';
 export {
   WanxiLocationDetailDrawer,
   WanxiNpcDetailDrawer,

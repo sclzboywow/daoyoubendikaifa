@@ -12,6 +12,7 @@ import { playerCommandExecutor } from '@server/lib/services/CommandExecutors';
 import {
   describeWanxiFirstContactMemoryTag,
   describeWanxiInteractiveMemoryTag,
+  describeWanxiWorldMemoryTag,
   describeWanxiMemoryTagForRole,
   getWanxiDailyDateKey,
   getWanxiDailyEventChoice,
@@ -91,6 +92,7 @@ function relationshipSnapshot(args: {
       (tag) =>
         describeWanxiFirstContactMemoryTag(tag) ??
         describeWanxiInteractiveMemoryTag(tag) ??
+        describeWanxiWorldMemoryTag(tag) ??
         describeWanxiMemoryTagForRole(args.roleKey, tag),
     ),
     ...(args.lastInteractionAt

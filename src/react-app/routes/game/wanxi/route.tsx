@@ -3,6 +3,8 @@ import {
   WanxiDailyEventDrawer,
   WanxiLocationDetailDrawer,
   WanxiNpcDetailDrawer,
+  WanxiPropDetailDrawer,
+  WanxiWorldEncounterDrawer,
   WanxiSceneCanvas,
   WanxiSceneChrome,
   WanxiStoryEffectNotice,
@@ -18,11 +20,14 @@ import {
   fetchWanxiDailyEventNarrative,
   resolveWanxiDailyEvent,
 } from '@app/components/feature/wanxi/wanxiContinuityApi';
+import { fetchWanxiWorldEncounter } from '@app/components/feature/wanxi/wanxiWorldApi';
 import {
   getWanxiLampStoryActionPresentation,
   getWanxiLocation,
   getWanxiNpcById,
   getWanxiNpcByRoleKey,
+  getWanxiPropById,
+  isWanxiWorldEncounterId,
   isWanxiDailyEventId,
   isWanxiLampStoryActionId,
   WANXI_LAMP_STORY_ACTIONS,
@@ -31,12 +36,14 @@ import {
   type WanxiLampStoryActionPresentation,
   type WanxiLampStorySnapshot,
 } from '@shared/engine/wanxi';
+import type { WanxiWorldEncounterView } from '@shared/contracts/wanxiWorld';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 type WanxiSelection =
   | { kind: 'npc'; roleKey: string }
-  | { kind: 'location'; locationId: string };
+  | { kind: 'location'; locationId: string }
+  | { kind: 'prop'; propId: string };
 
 const CLOSE_SELECT_SUPPRESS_MS = 450;
 
@@ -52,12 +59,16 @@ export default function WanxiPage() {
   const [chronicleOpen, setChronicleOpen] = useState(false);
   const [dailyNarrative, setDailyNarrative] =
     useState<WanxiDailyEventNarrativeResult | null>(null);
+  const [worldEncounter, setWorldEncounter] =
+    useState<WanxiWorldEncounterView | null>(null);
   const suppressSelectUntilRef = useRef(0);
   const [selection, setSelectionState] = useState<WanxiSelection | null>(() => {
     const npc = searchParams.get('npc');
     if (npc) return { kind: 'npc', roleKey: npc };
     const location = searchParams.get('location');
     if (location) return { kind: 'location', locationId: location };
+    const prop = searchParams.get('prop');
+    if (prop) return { kind: 'prop', propId: prop };
     return null;
   });
   const [storyEffect, setStoryEffect] = useState<{
@@ -70,7 +81,11 @@ export default function WanxiPage() {
 
   useEffect(() => {
     if (isSelectSuppressed()) {
-      if (!searchParams.get('npc') && !searchParams.get('location')) {
+      if (
+        !searchParams.get('npc') &&
+        !searchParams.get('location') &&
+        !searchParams.get('prop')
+      ) {
         setSelectionState((current) => (current === null ? current : null));
       }
       return;
@@ -78,6 +93,7 @@ export default function WanxiPage() {
 
     const npc = searchParams.get('npc');
     const location = searchParams.get('location');
+    const prop = searchParams.get('prop');
     if (npc) {
       setSelectionState((current) =>
         current?.kind === 'npc' && current.roleKey === npc
@@ -94,6 +110,14 @@ export default function WanxiPage() {
       );
       return;
     }
+    if (prop) {
+      setSelectionState((current) =>
+        current?.kind === 'prop' && current.propId === prop
+          ? current
+          : { kind: 'prop', propId: prop },
+      );
+      return;
+    }
     setSelectionState((current) => (current === null ? current : null));
   }, [searchParams]);
 
@@ -103,9 +127,13 @@ export default function WanxiPage() {
     selection?.kind === 'location'
       ? getWanxiLocation(selection.locationId)
       : null;
+  const selectedProp =
+    selection?.kind === 'prop'
+      ? getWanxiPropById(selection.propId)
+      : null;
 
   const setSelection = useCallback(
-    (next: { npc?: string; location?: string }) => {
+    (next: { npc?: string; location?: string; prop?: string }) => {
       if (isSelectSuppressed() && (next.npc || next.location)) {
         return;
       }
@@ -114,6 +142,8 @@ export default function WanxiPage() {
         setSelectionState({ kind: 'npc', roleKey: next.npc });
       } else if (next.location) {
         setSelectionState({ kind: 'location', locationId: next.location });
+      } else if (next.prop) {
+        setSelectionState({ kind: 'prop', propId: next.prop });
       } else {
         setSelectionState(null);
       }
@@ -121,8 +151,10 @@ export default function WanxiPage() {
       const params = new URLSearchParams(searchParams);
       params.delete('npc');
       params.delete('location');
+      params.delete('prop');
       if (next.npc) params.set('npc', next.npc);
       if (next.location) params.set('location', next.location);
+      if (next.prop) params.set('prop', next.prop);
       const search = params.toString();
       navigate(
         {
@@ -165,6 +197,25 @@ export default function WanxiPage() {
   };
 
   const runActivity = async (bindingId: string) => {
+    if (isWanxiWorldEncounterId(bindingId)) {
+      setActing(true);
+      try {
+        const encounter = await fetchWanxiWorldEncounter(bindingId);
+        setSelection({});
+        setWorldEncounter(encounter);
+      } catch (error) {
+        pushToast({
+          message:
+            error instanceof Error
+              ? error.message
+              : '这件坊中小事暂时接不上',
+          tone: 'warning',
+        });
+      } finally {
+        setActing(false);
+      }
+      return;
+    }
     if (isWanxiDailyEventId(bindingId)) {
       await openDailyEvent(bindingId);
       return;
@@ -245,13 +296,18 @@ export default function WanxiPage() {
       <WanxiSceneCanvas
         npcPlacements={snapshot.npcPlacements}
         locationStates={snapshot.locationStates}
+        propStates={snapshot.propStates}
         selectedNpcId={resolvedSelectedNpc?.id ?? null}
         selectedLocationId={selectedLocation?.id ?? null}
+        selectedPropId={selectedProp?.id ?? null}
         onNpcSelect={(npcId) => {
           const npc = getWanxiNpcById(npcId);
           if (npc) setSelection({ npc: npc.roleKey });
         }}
-        onLocationSelect={(locationId) => setSelection({ location: locationId })}
+        onLocationSelect={(locationId) =>
+          setSelection({ location: locationId })
+        }
+        onPropSelect={(propId) => setSelection({ prop: propId })}
       />
 
       <WanxiSceneChrome onOpenChronicle={() => setChronicleOpen(true)} />
@@ -310,6 +366,14 @@ export default function WanxiPage() {
           onClose={clearSelection}
           onActivitySelect={runActivity}
         />
+      ) : selectedProp ? (
+        <WanxiPropDetailDrawer
+          prop={selectedProp}
+          enabledActivityBindingIds={snapshot.enabledActivityBindingIds}
+          busy={acting}
+          onClose={clearSelection}
+          onActivitySelect={runActivity}
+        />
       ) : null}
 
       <WanxiChronicleDrawer
@@ -324,6 +388,16 @@ export default function WanxiPage() {
         narrative={dailyNarrative}
         onClose={() => setDailyNarrative(null)}
         onResolve={resolveDailyEvent}
+      />
+
+      <WanxiWorldEncounterDrawer
+        encounter={worldEncounter}
+        busy={acting}
+        onClose={() => setWorldEncounter(null)}
+        onResolved={() => {
+          query.reload();
+          continuityQuery.reload();
+        }}
       />
     </div>
   );

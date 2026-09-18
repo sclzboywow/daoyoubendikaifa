@@ -2,12 +2,15 @@ import wanxiMapUrl from '@app/assets/wanxi/wanxi-map-v1.png';
 import {
   getWanxiLocation,
   getWanxiNpcById,
+  getWanxiPropById,
   WANXI_MAIN_SCENE,
+  WANXI_PROP_PLACEMENTS,
   type WanxiLocationRuntimeState,
   type WanxiMarkerImportance,
   type WanxiSceneLabelDefinition,
   type WanxiNpcPlacement,
   type WanxiPoint,
+  type WanxiPropRuntimeState,
 } from '@shared/engine/wanxi';
 import { cn } from '@shared/lib/cn';
 import {
@@ -27,10 +30,13 @@ const { width: MAP_WIDTH, height: MAP_HEIGHT } = WANXI_MAIN_SCENE.logicalSize;
 export interface WanxiSceneCanvasProps {
   npcPlacements: readonly WanxiNpcPlacement[];
   locationStates: readonly WanxiLocationRuntimeState[];
+  propStates: readonly WanxiPropRuntimeState[];
   selectedNpcId?: string | null;
   selectedLocationId?: string | null;
+  selectedPropId?: string | null;
   onNpcSelect(npcId: string): void;
   onLocationSelect(locationId: string): void;
+  onPropSelect(propId: string): void;
 }
 
 function initialTransform(focus?: WanxiPoint | null) {
@@ -294,18 +300,101 @@ const NpcMarker = memo(function NpcMarker({
   );
 });
 
+interface PropMarkerProps {
+  propId: string;
+  x: number;
+  y: number;
+  selected: boolean;
+  attention: boolean;
+  badge?: string;
+  uiScale: number;
+  onSelect(id: string): void;
+}
+
+const PropMarker = memo(function PropMarker({
+  propId,
+  x,
+  y,
+  selected,
+  attention,
+  badge,
+  uiScale,
+  onSelect,
+}: PropMarkerProps) {
+  const prop = getWanxiPropById(propId);
+  if (!prop) return null;
+
+  return (
+    <button
+      type="button"
+      aria-label={`查看${prop.name}`}
+      onClick={(event: MouseEvent<HTMLButtonElement>) => {
+        event.stopPropagation();
+        onSelect(propId);
+      }}
+      className={cn(
+        'group absolute z-[15] -translate-x-1/2 -translate-y-1/2',
+        attention && 'z-30',
+      )}
+      style={{ left: `${x}%`, top: `${y}%` }}
+    >
+      <span
+        className="relative block"
+        style={{ transform: `scale(${uiScale})` }}
+      >
+        <span
+          className={cn(
+            'border-ink/25 bg-bgpaper/78 text-ink flex size-5 rotate-45 items-center justify-center border shadow-sm backdrop-blur-[1px]',
+            selected &&
+              'border-crimson bg-bgpaper text-crimson ring-2 ring-crimson/15',
+            attention &&
+              'border-crimson/70 bg-bgpaper text-crimson ring-2 ring-crimson/10',
+          )}
+        >
+          <span className="-rotate-45 text-[9px] leading-none">
+            {prop.sigil}
+          </span>
+        </span>
+        {badge ? (
+          <span className="border-crimson/30 bg-bgpaper/95 text-crimson absolute -top-2 left-full ml-1 whitespace-nowrap border px-1.5 py-0.5 text-[9px] leading-none shadow-sm">
+            {badge}
+          </span>
+        ) : null}
+        <span
+          className={cn(
+            'border-ink/15 bg-bgpaper/94 text-ink pointer-events-none absolute top-full left-1/2 mt-2 -translate-x-1/2 whitespace-nowrap border px-2 py-1 text-[10px] shadow-sm transition-all',
+            selected || attention
+              ? 'translate-y-0 opacity-100'
+              : 'translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100',
+          )}
+        >
+          {prop.name}
+        </span>
+      </span>
+    </button>
+  );
+});
+
 export function WanxiSceneCanvas({
   npcPlacements,
   locationStates,
+  propStates,
   selectedNpcId,
   selectedLocationId,
+  selectedPropId,
   onNpcSelect,
   onLocationSelect,
+  onPropSelect,
 }: WanxiSceneCanvasProps) {
   const locationStateById = useMemo(
     () => new Map(locationStates.map((state) => [state.locationId, state])),
     [locationStates],
   );
+  const propStateById = useMemo(
+    () => new Map(propStates.map((state) => [state.propId, state])),
+    [propStates],
+  );
+
   const occupiedLocationIds = useMemo(
     () =>
       new Set(
@@ -401,6 +490,30 @@ export function WanxiSceneCanvas({
                   importance={marker?.importance ?? 'normal'}
                   uiScale={uiScale}
                   onSelect={onLocationSelect}
+                />
+              );
+            })}
+
+            {WANXI_PROP_PLACEMENTS.map((placement) => {
+              const runtime = propStateById.get(placement.propId);
+              if (runtime?.state === 'hidden') return null;
+              const selected = selectedPropId === placement.propId;
+              const attention = runtime?.state === 'attention';
+              const minScale = placement.marker?.minScale ?? 1.05;
+              if (!selected && !attention && mapScale < minScale) {
+                return null;
+              }
+              return (
+                <PropMarker
+                  key={placement.propId}
+                  propId={placement.propId}
+                  x={placement.point.x}
+                  y={placement.point.y}
+                  selected={selected}
+                  attention={attention}
+                  badge={runtime?.badge}
+                  uiScale={uiScale}
+                  onSelect={onPropSelect}
                 />
               );
             })}
