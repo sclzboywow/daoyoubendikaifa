@@ -1741,3 +1741,38 @@ export const creationProducts = pgTable(
     ),
   ],
 );
+
+// ===== 万戏坊剧情进度 =====
+// 剧情状态独立持久化；NPC/场景定义仍留在 shared 静态配置中。
+export const wanxiStoryProgress = pgTable(
+  'wanjiedaoyou_wanxi_story_progress',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    cultivatorId: uuid('cultivator_id')
+      .references(() => cultivators.id, { onDelete: 'cascade' })
+      .notNull(),
+    storyId: varchar('story_id', { length: 100 }).notNull(),
+    stage: varchar('stage', { length: 64 }).notNull(),
+    schemaVersion: integer('schema_version').notNull().default(1),
+    // 剧情内部运行态；V1.1 首先用于战斗失败次数与软保底，不与场景/NPC定义耦合。
+    state: jsonb('state').notNull().default({}),
+    startedAt: timestamp('started_at').defaultNow().notNull(),
+    completedAt: timestamp('completed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('wanxi_story_progress_cultivator_story_uidx').on(
+      table.cultivatorId,
+      table.storyId,
+    ),
+    index('wanxi_story_progress_story_stage_idx').on(
+      table.storyId,
+      table.stage,
+    ),
+  ],
+);
+

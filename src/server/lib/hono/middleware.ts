@@ -4,6 +4,10 @@ import {
   isLegacyAdminEmail,
 } from '@server/lib/auth/adminAccess';
 import { auth } from '@server/lib/auth/auth';
+import {
+  ensureDevAuthUser,
+  isDevAuthBypassEnabled,
+} from '@server/lib/auth/devAuthBypass';
 import type { AuthUser } from '@server/lib/auth/types';
 import { getExecutor } from '@server/lib/drizzle/db';
 import { cultivators } from '@server/lib/drizzle/schema';
@@ -157,6 +161,12 @@ async function resolveUser(context: Context<AppEnv>): Promise<AuthUser | null> {
 
   if (existingUser) {
     return existingUser;
+  }
+
+  if (isDevAuthBypassEnabled()) {
+    const user = await ensureDevAuthUser();
+    context.set('user', user);
+    return user;
   }
 
   const session = await auth.api.getSession({

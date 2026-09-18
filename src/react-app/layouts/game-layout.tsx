@@ -428,6 +428,16 @@ export function GameMapLayout() {
   );
 }
 
+export function GameWanxiLayout() {
+  return (
+    <div className="bg-paper h-[100dvh] overflow-hidden">
+      <main className="h-full overflow-hidden">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
+
 interface GenesisSceneDescriptor {
   sceneLabel: string;
   subtitle: string;

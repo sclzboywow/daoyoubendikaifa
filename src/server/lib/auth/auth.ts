@@ -15,6 +15,7 @@ import {
   getCookieDomainConfig,
   getCrossSiteCookieConfig,
 } from './cookieDomain';
+import { isDevAuthBypassEnabled } from './devAuthBypass';
 import { BETTER_AUTH_SCHEMA_NAME, betterAuthSchema } from './schema';
 
 function getRequiredEnv(name: 'BETTER_AUTH_SECRET' | 'BETTER_AUTH_URL') {
@@ -119,13 +120,13 @@ export const auth = betterAuth({
         ].join('\n'),
       );
     },
-    sendOnSignUp: true,
-    sendOnSignIn: true,
+    sendOnSignUp: !isDevAuthBypassEnabled(),
+    sendOnSignIn: !isDevAuthBypassEnabled(),
     autoSignInAfterVerification: true,
   },
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: true,
+    requireEmailVerification: !isDevAuthBypassEnabled(),
     revokeSessionsOnPasswordReset: true,
     sendResetPassword: async ({ user, url }) => {
       await sendViaSmtp(

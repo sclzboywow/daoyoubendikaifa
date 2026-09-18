@@ -5,6 +5,7 @@ export type GameShellKind =
   | 'activity'
   | 'combat'
   | 'map'
+  | 'wanxi'
   | 'dungeon';
 
 export function resolveGameShellKind(pathname: string): GameShellKind | null {
@@ -27,6 +28,7 @@ export function resolveGameShellKind(pathname: string): GameShellKind | null {
   }
 
   if (
+    pathname === '/game/wanxi/story/lamp/battle' ||
     pathname === '/game/battle/challenge' ||
     /^\/game\/battle\/live\/[^/]+$/.test(pathname) ||
     /^\/game\/battle\/[^/]+$/.test(pathname) ||
@@ -42,6 +44,10 @@ export function resolveGameShellKind(pathname: string): GameShellKind | null {
     /^\/game\/sect\/[^/]+\/visit$/.test(pathname)
   ) {
     return 'map';
+  }
+
+  if (pathname === '/game/wanxi' || pathname.startsWith('/game/wanxi/')) {
+    return 'wanxi';
   }
 
   if (pathname === '/game/dungeon') {

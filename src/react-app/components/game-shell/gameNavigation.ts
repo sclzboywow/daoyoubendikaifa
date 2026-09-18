@@ -250,6 +250,12 @@ export const gameDockGroups: GameNavGroup[] = [
         href: '/game/auction',
         expandedDockLabel: '⚖️ 拍卖行',
       },
+      {
+        id: 'wanxi',
+        sceneLabel: '万戏坊',
+        href: '/game/wanxi',
+        expandedDockLabel: '🎭 万戏坊',
+      },
     ],
   },
   {
@@ -316,6 +322,10 @@ export const gameDockGroups: GameNavGroup[] = [
       {
         id: 'task-challenge',
         sceneLabel: '破境试炼',
+      },
+      {
+        id: 'wanxi-story-battle',
+        sceneLabel: '旧契索命',
       },
       {
         id: 'bet-battle-challenge',

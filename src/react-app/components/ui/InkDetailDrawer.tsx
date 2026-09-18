@@ -74,7 +74,9 @@ export function InkDetailDrawer({
     document.body.style.overflow = 'hidden';
     const focusTimer = window.setTimeout(() => panelRef.current?.focus(), 0);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && closeOnEscape) onCloseRef.current();
+      if (event.key === 'Escape' && closeOnEscape) {
+        window.setTimeout(() => onCloseRef.current(), 0);
+      }
     };
     document.addEventListener('keydown', onKeyDown);
 
@@ -110,15 +112,30 @@ export function InkDetailDrawer({
     }
   };
 
+  const requestClose = (
+    event?: { stopPropagation(): void; preventDefault(): void },
+  ) => {
+    event?.stopPropagation();
+    event?.preventDefault();
+    // Defer unmount so the same click/pointer gesture cannot fall through
+    // onto map markers or other controls beneath the portal.
+    window.setTimeout(() => onCloseRef.current(), 0);
+  };
+
   if (!isOpen || typeof document === 'undefined') return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50">
+    <div
+      className="fixed inset-0 z-50"
+      onMouseDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
       <button
         type="button"
         className="ink-overlay absolute inset-0 h-full w-full cursor-default"
         aria-label="关闭详情"
-        onClick={closeOnOverlayClick ? onClose : undefined}
+        onClick={closeOnOverlayClick ? requestClose : undefined}
       />
       <div
         ref={panelRef}
@@ -139,7 +156,7 @@ export function InkDetailDrawer({
             <h2 id={titleId} className="text-lg font-semibold">
               {title}
             </h2>
-            <InkButton onClick={onClose} variant="secondary">
+            <InkButton onClick={() => requestClose()} variant="secondary">
               {closeLabel}
             </InkButton>
           </div>

@@ -9,6 +9,7 @@ import {
   GameMapLayout,
   GameNarrativeLayout,
   GameViewportLayout,
+  GameWanxiLayout,
   PlayerShellLayout,
 } from '@app/layouts/game-layout';
 import { lazyRoute } from '@app/lib/router/lazyRoute';
@@ -979,6 +980,22 @@ export const router = createBrowserRouter(
             />
           </Route>
 
+          <Route element={<GameWanxiLayout />}>
+            <Route
+              path="wanxi"
+              lazy={lazyRoute(() => import('@app/routes/game/wanxi/route'))}
+              handle={scene(
+                {
+                  id: 'wanxi',
+                  chrome: 'immersive',
+                  dock: 'hidden',
+                  summary: '百戏聚于一坊，人物、见闻与游艺都从这张场景图中展开。',
+                },
+                '万戏坊',
+              )}
+            />
+          </Route>
+
           <Route element={<GameActivityLayout />}>
             <Route
               path="sect/gate/sweep"
@@ -1135,6 +1152,20 @@ export const router = createBrowserRouter(
                   dock: 'hidden',
                 },
                 '宗门战局',
+              )}
+            />
+            <Route
+              path="wanxi/story/lamp/battle"
+              lazy={lazyRoute(
+                () => import('@app/routes/game/wanxi/story/lamp/battle/route'),
+              )}
+              handle={scene(
+                {
+                  id: 'wanxi-story-battle',
+                  chrome: 'immersive',
+                  dock: 'hidden',
+                },
+                '旧契索命',
               )}
             />
           </Route>

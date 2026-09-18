@@ -1,4 +1,5 @@
 import { auth } from '@server/lib/auth/auth';
+import { isDevAuthBypassEnabled } from '@server/lib/auth/devAuthBypass';
 import { authUsers } from '@server/lib/auth/schema';
 import {
   isAltchaServerEnabled,
@@ -47,6 +48,10 @@ function authError(message: string, status = 400) {
 }
 
 async function validateCaptcha(context: Context): Promise<Response | null> {
+  if (isDevAuthBypassEnabled()) {
+    return null;
+  }
+
   const action = CAPTCHA_ACTION_BY_PATH.get(context.req.path);
   if (!action) {
     return null;

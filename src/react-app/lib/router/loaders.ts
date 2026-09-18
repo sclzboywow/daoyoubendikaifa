@@ -33,9 +33,53 @@ async function hasAuthenticatedUser(request: Request) {
   return Boolean(session?.user);
 }
 
+type DevSessionResponse = {
+  enabled?: boolean;
+  user?: {
+    id: string;
+    email: string;
+    name: string;
+  };
+};
+
+async function resolveDevBypassSession(
+  request: Request,
+): Promise<SessionData | null> {
+  if (!import.meta.env.DEV) {
+    return null;
+  }
+
+  try {
+    const response = await fetch('/api/dev/session', {
+      cache: 'no-store',
+      credentials: 'include',
+      signal: request.signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as DevSessionResponse;
+    if (!payload.enabled || !payload.user) {
+      return null;
+    }
+
+    return {
+      user: payload.user,
+    } as SessionData;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveSessionData(
   request: Request,
 ): Promise<SessionData | null> {
+  const bypassSession = await resolveDevBypassSession(request);
+  if (bypassSession) {
+    return bypassSession;
+  }
+
   try {
     const result = await authClient.getSession({
       fetchOptions: {

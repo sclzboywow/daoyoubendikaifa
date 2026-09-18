@@ -1,3 +1,4 @@
+import { isDevAuthBypassEnabled } from '@server/lib/auth/devAuthBypass';
 import type { AppEnv } from '@server/lib/hono/types';
 import { getMessageInfrastructureHealthStatus } from '@server/lib/mq/domainEventRegistry';
 import { getNatsHealthStatus } from '@server/lib/nats';
@@ -16,6 +17,7 @@ import communityRouter from '@server/routes/api/community.router';
 import craftRouter from '@server/routes/api/craft.router';
 import cultivatorRouter from '@server/routes/api/cultivator.router';
 import cultivatorsRouter from '@server/routes/api/cultivators.router';
+import devRouter from '@server/routes/api/dev.router';
 import divineFortuneRouter from '@server/routes/api/divine-fortune.router';
 import dungeonRouter from '@server/routes/api/dungeon.router';
 import enemiesRouter from '@server/routes/api/enemies.router';
@@ -37,6 +39,7 @@ import sponsorshipRouter from '@server/routes/api/sponsorship.router';
 import spiritFieldRouter from '@server/routes/api/spirit-field.router';
 import tasksRouter from '@server/routes/api/tasks.router';
 import towerRouter from '@server/routes/api/tower.router';
+import wanxiRouter from '@server/routes/api/wanxi.router';
 import worldChatRouter from '@server/routes/api/world-chat.router';
 import playerRouter from '@server/routes/player.router';
 import { Hono } from 'hono';
@@ -89,6 +92,9 @@ apiRouter.route('/black-market', blackMarketRouter);
 apiRouter.route('/captcha', captchaRouter);
 apiRouter.route('/community', communityRouter);
 apiRouter.route('/craft', craftRouter);
+if (isDevAuthBypassEnabled()) {
+  apiRouter.route('/dev', devRouter);
+}
 apiRouter.route('/cultivator', cultivatorRouter);
 apiRouter.route('/cultivators', cultivatorsRouter);
 apiRouter.route('/divine-fortune', divineFortuneRouter);
@@ -108,6 +114,7 @@ apiRouter.route('/reputation-shop', reputationShopRouter);
 apiRouter.route('/save-character', saveCharacterRouter);
 apiRouter.route('/tasks', tasksRouter);
 apiRouter.route('/tower', towerRouter);
+apiRouter.route('/wanxi', wanxiRouter);
 apiRouter.route('/sects', sectsRouter);
 apiRouter.route('/sponsorship', sponsorshipRouter);
 apiRouter.route('/spirit-field', spiritFieldRouter);
