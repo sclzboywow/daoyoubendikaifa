@@ -3,6 +3,7 @@ import {
   WANXI_MAP_MAX_SCALE,
   WANXI_MAP_MIN_SCALE,
 } from './WanxiMapBackground';
+import { getWanxiNpcSpritePresentation } from './wanxiNpcSprites';
 import {
   getWanxiLocation,
   getWanxiNpcById,
@@ -233,6 +234,71 @@ const NpcMarker = memo(function NpcMarker({
   const attention = Boolean(placement.attention);
   const showName = selected || attention || mapScale >= 0.58;
   const showIdentity = selected || mapScale >= 1.3;
+  const sprite = getWanxiNpcSpritePresentation(npc.id);
+
+  if (sprite) {
+    return (
+      <button
+        type="button"
+        aria-label={`与${npc.name}交谈`}
+        onClick={(event: MouseEvent<HTMLButtonElement>) => {
+          event.stopPropagation();
+          onSelect(npc.id);
+        }}
+        className="group absolute z-20 -translate-x-1/2 -translate-y-full"
+        style={{ left: `${placement.point.x}%`, top: `${placement.point.y}%` }}
+      >
+        <span
+          className="relative block origin-bottom"
+          style={{
+            width: `${sprite.width}px`,
+            left: `${sprite.offsetX ?? 0}px`,
+            top: `${sprite.offsetY ?? 0}px`,
+          }}
+        >
+          <span
+            className={cn(
+              'pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 whitespace-nowrap rounded-sm border px-2 py-1 text-center leading-none shadow-[0_2px_6px_rgba(44,24,16,0.12)] backdrop-blur-[1px] transition-opacity duration-150',
+              selected || attention
+                ? 'border-crimson/35 bg-bgpaper/96 text-crimson'
+                : 'border-ink/15 bg-bgpaper/92 text-ink/90',
+              showName
+                ? 'opacity-100'
+                : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+            )}
+            style={{
+              transform: `translateX(-50%) scale(${uiScale})`,
+              transformOrigin: 'bottom center',
+            }}
+          >
+            <span className="block text-[11px] font-medium">{npc.name}</span>
+            <span
+              className={cn(
+                'text-ink-secondary mt-0.5 text-[9px] font-normal',
+                showIdentity
+                  ? 'block'
+                  : 'hidden group-hover:block group-focus-visible:block',
+              )}
+            >
+              {npc.identity}
+            </span>
+          </span>
+
+          <img
+            src={sprite.src}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className={cn(
+              'pointer-events-none block h-auto w-full max-w-none select-none drop-shadow-[0_4px_6px_rgba(44,24,16,0.2)] transition-transform duration-150 group-hover:scale-[1.03] group-focus-visible:scale-[1.03]',
+              selected &&
+                'drop-shadow-[0_0_8px_rgba(143,45,45,0.48)]',
+            )}
+          />
+        </span>
+      </button>
+    );
+  }
 
   return (
     <button
