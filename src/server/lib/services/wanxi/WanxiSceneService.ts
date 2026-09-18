@@ -75,7 +75,7 @@ function editorScheduledPlacements(
     return [...WANXI_DEFAULT_NPC_PLACEMENTS];
   }
 
-  const staticByNpc = new Map(
+  const staticByNpc = new Map<string, WanxiNpcPlacement>(
     WANXI_DEFAULT_NPC_PLACEMENTS.map((placement) => [
       placement.npcId,
       placement,

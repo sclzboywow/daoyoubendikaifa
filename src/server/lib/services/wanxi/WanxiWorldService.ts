@@ -106,6 +106,7 @@ function encounterView(
 }
 
 export interface WanxiWorldRuntimeState extends WanxiWorldRuntimeSummary {
+  visibleRoleKeys: string[];
   activeEncounterIds: string[];
   propStates: WanxiPropRuntimeState[];
   storyStage: string;

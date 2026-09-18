@@ -37,8 +37,8 @@ function normalizeEditorState(
     );
   }
 
-  const knownNpcIds = new Set(WANXI_NPCS.map((npc) => npc.id));
-  const knownLocationIds = new Set(WANXI_LOCATIONS.map((location) => location.id));
+  const knownNpcIds = new Set<string>(WANXI_NPCS.map((npc) => npc.id));
+  const knownLocationIds = new Set<string>(WANXI_LOCATIONS.map((location) => location.id));
   const seen = new Set<string>();
 
   for (const placement of parsed.data.npcPlacements) {

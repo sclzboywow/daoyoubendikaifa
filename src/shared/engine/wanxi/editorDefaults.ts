@@ -135,7 +135,7 @@ const PLAN: Record<WanxiNpcRoleKey, EditorPlacementPlan> = {
   },
 };
 
-const DEFAULT_RUNTIME_IDS = new Set(
+const DEFAULT_RUNTIME_IDS = new Set<string>(
   WANXI_DEFAULT_NPC_PLACEMENTS.map((placement) => placement.npcId),
 );
 

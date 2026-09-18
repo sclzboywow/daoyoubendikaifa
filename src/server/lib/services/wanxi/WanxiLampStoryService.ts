@@ -309,8 +309,14 @@ export async function executeWanxiLampStoryBattle(args: {
         player: loaded.cultivator,
         battleLosses,
       });
-      const hp = loaded.cultivator.condition.resources.hp;
-      if (tuning.newcomerProtection && hp.max > 0 && hp.current / hp.max < 0.45) {
+      const hp = loaded.cultivator.condition?.resources.hp;
+      const hpMax = hp?.max ?? 0;
+      const hpCurrent = hp?.current ?? 0;
+      if (
+        tuning.newcomerProtection &&
+        hpMax > 0 &&
+        hpCurrent / hpMax < 0.45
+      ) {
         throw new WanxiLampStoryError('你现在伤势太重。祁望川已经把旧契压住，先去灵眼之泉稳住伤势，再回来也不迟。');
       }
       const execution = executePersistentWorldBattle({

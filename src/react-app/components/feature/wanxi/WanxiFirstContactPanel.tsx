@@ -25,13 +25,14 @@ export function WanxiFirstContactPanel(props: {
   const [error, setError] = useState<string | null>(null);
   const [committedContinuity, setCommittedContinuity] =
     useState<WanxiContinuitySnapshot | null>(null);
-
-  useEffect(() => {
+  const [appliedRoleKey, setAppliedRoleKey] = useState(props.roleKey);
+  if (appliedRoleKey !== props.roleKey) {
+    setAppliedRoleKey(props.roleKey);
     setResolution(null);
     setResolvingChoiceId(null);
     setError(null);
     setCommittedContinuity(null);
-  }, [props.roleKey]);
+  }
 
   const opening = useNarrativePlayback({
     playbackKey: `wanxi:first-contact:${props.roleKey}`,

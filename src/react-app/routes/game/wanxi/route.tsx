@@ -80,45 +80,48 @@ export default function WanxiPage() {
   const isSelectSuppressed = () => Date.now() < suppressSelectUntilRef.current;
 
   useEffect(() => {
-    if (isSelectSuppressed()) {
-      if (
-        !searchParams.get('npc') &&
-        !searchParams.get('location') &&
-        !searchParams.get('prop')
-      ) {
-        setSelectionState((current) => (current === null ? current : null));
+    const frame = window.requestAnimationFrame(() => {
+      if (isSelectSuppressed()) {
+        if (
+          !searchParams.get('npc') &&
+          !searchParams.get('location') &&
+          !searchParams.get('prop')
+        ) {
+          setSelectionState((current) => (current === null ? current : null));
+        }
+        return;
       }
-      return;
-    }
 
-    const npc = searchParams.get('npc');
-    const location = searchParams.get('location');
-    const prop = searchParams.get('prop');
-    if (npc) {
-      setSelectionState((current) =>
-        current?.kind === 'npc' && current.roleKey === npc
-          ? current
-          : { kind: 'npc', roleKey: npc },
-      );
-      return;
-    }
-    if (location) {
-      setSelectionState((current) =>
-        current?.kind === 'location' && current.locationId === location
-          ? current
-          : { kind: 'location', locationId: location },
-      );
-      return;
-    }
-    if (prop) {
-      setSelectionState((current) =>
-        current?.kind === 'prop' && current.propId === prop
-          ? current
-          : { kind: 'prop', propId: prop },
-      );
-      return;
-    }
-    setSelectionState((current) => (current === null ? current : null));
+      const npc = searchParams.get('npc');
+      const location = searchParams.get('location');
+      const prop = searchParams.get('prop');
+      if (npc) {
+        setSelectionState((current) =>
+          current?.kind === 'npc' && current.roleKey === npc
+            ? current
+            : { kind: 'npc', roleKey: npc },
+        );
+        return;
+      }
+      if (location) {
+        setSelectionState((current) =>
+          current?.kind === 'location' && current.locationId === location
+            ? current
+            : { kind: 'location', locationId: location },
+        );
+        return;
+      }
+      if (prop) {
+        setSelectionState((current) =>
+          current?.kind === 'prop' && current.propId === prop
+            ? current
+            : { kind: 'prop', propId: prop },
+        );
+        return;
+      }
+      setSelectionState((current) => (current === null ? current : null));
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [searchParams]);
 
   const selectedNpc =

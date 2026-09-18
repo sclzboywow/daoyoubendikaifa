@@ -4,7 +4,7 @@ import type {
   WanxiWorldEncounterResolution,
   WanxiWorldEncounterView,
 } from '@shared/contracts/wanxiWorld';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { resolveWanxiWorldEncounter } from './wanxiWorldApi';
 
 export function WanxiWorldEncounterDrawer(props: {
@@ -18,12 +18,14 @@ export function WanxiWorldEncounterDrawer(props: {
   const [resolvingChoiceId, setResolvingChoiceId] =
     useState<string | null>(null);
   const [error, setError] = useState<string>();
-
-  useEffect(() => {
+  const encounterId = props.encounter?.id ?? '';
+  const [appliedEncounterId, setAppliedEncounterId] = useState(encounterId);
+  if (appliedEncounterId !== encounterId) {
+    setAppliedEncounterId(encounterId);
     setResolution(null);
     setResolvingChoiceId(null);
     setError(undefined);
-  }, [props.encounter?.id]);
+  }
 
   const messages = useMemo(() => {
     if (!props.encounter) return [];

@@ -234,7 +234,7 @@ const NpcMarker = memo(function NpcMarker({
   const attention = Boolean(placement.attention);
   const showName = selected || attention || mapScale >= 0.58;
   const showIdentity = selected || mapScale >= 1.3;
-  const sprite = getWanxiNpcSpritePresentation(npc.id);
+  const sprite = getWanxiNpcSpritePresentation(npc);
 
   if (sprite) {
     return (

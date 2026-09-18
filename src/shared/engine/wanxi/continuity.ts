@@ -93,7 +93,7 @@ export function resolveWanxiRelationshipStage(familiarity: number) {
     : 0;
   return (
     RELATIONSHIP_THRESHOLDS.find((entry) => score >= entry.min) ??
-    RELATIONSHIP_THRESHOLDS.at(-1)!
+    RELATIONSHIP_THRESHOLDS[RELATIONSHIP_THRESHOLDS.length - 1]!
   );
 }
 

@@ -45,6 +45,29 @@ function samePlaybackState(a: PlaybackState, b: PlaybackState) {
   );
 }
 
+function initialPlaybackState(
+  enabled: boolean,
+  messages: readonly WanxiLampStoryMessage[],
+  rememberPlayed: boolean,
+  playbackKey: string,
+): PlaybackState {
+  if (!enabled || messages.length === 0) {
+    return {
+      phase: messages.length ? 'idle' : 'complete',
+      messageIndex: 0,
+      visibleCharacters: 0,
+    };
+  }
+  if (reducedMotion() || (rememberPlayed && played(playbackKey))) {
+    return {
+      phase: 'complete',
+      messageIndex: messages.length - 1,
+      visibleCharacters: messages[messages.length - 1]?.body.length ?? 0,
+    };
+  }
+  return { phase: 'typing', messageIndex: 0, visibleCharacters: 0 };
+}
+
 export function useNarrativePlayback(args: {
   playbackKey: string;
   messages?: readonly WanxiLampStoryMessage[] | null;
@@ -54,48 +77,51 @@ export function useNarrativePlayback(args: {
   const enabled = args.enabled ?? true;
   const rememberPlayed = args.rememberPlayed ?? true;
   const messages = args.messages ?? EMPTY_MESSAGES;
-  const [state, setState] = useState<PlaybackState>({
-    phase: 'idle',
-    messageIndex: 0,
-    visibleCharacters: 0,
-  });
+  const configKey = `${args.playbackKey}:${enabled}:${messages.map((message) => message.id).join(',')}`;
+  const [state, setState] = useState<PlaybackState>(() =>
+    initialPlaybackState(enabled, messages, rememberPlayed, args.playbackKey),
+  );
+  const [appliedConfig, setAppliedConfig] = useState(configKey);
+  if (appliedConfig !== configKey) {
+    setAppliedConfig(configKey);
+    const next = initialPlaybackState(
+      enabled,
+      messages,
+      rememberPlayed,
+      args.playbackKey,
+    );
+    if (!samePlaybackState(state, next)) setState(next);
+  }
 
-  useEffect(() => {
-    let next: PlaybackState;
-    if (!enabled || messages.length === 0) {
-      next = {
-        phase: messages.length ? 'idle' : 'complete',
-        messageIndex: 0,
-        visibleCharacters: 0,
-      };
-    } else if (
-      reducedMotion() ||
-      (rememberPlayed && played(args.playbackKey))
-    ) {
-      next = {
-        phase: 'complete',
-        messageIndex: messages.length - 1,
-        visibleCharacters: messages.at(-1)?.body.length ?? 0,
-      };
-    } else {
-      next = { phase: 'typing', messageIndex: 0, visibleCharacters: 0 };
-    }
-    setState((current) => (samePlaybackState(current, next) ? current : next));
-  }, [args.playbackKey, enabled, messages, rememberPlayed]);
+  if (
+    enabled &&
+    state.phase !== 'idle' &&
+    state.phase !== 'complete' &&
+    !messages[state.messageIndex]
+  ) {
+    if (rememberPlayed) markPlayed(args.playbackKey);
+    setState((current) =>
+      current.phase === 'complete' ? current : { ...current, phase: 'complete' },
+    );
+  }
+
+  if (
+    enabled &&
+    state.phase === 'typing' &&
+    messages[state.messageIndex] &&
+    state.visibleCharacters >= messages[state.messageIndex].body.length
+  ) {
+    setState((current) =>
+      current.phase === 'waiting' ? current : { ...current, phase: 'waiting' },
+    );
+  }
 
   useEffect(() => {
     if (!enabled || state.phase === 'idle' || state.phase === 'complete') return;
     const current = messages[state.messageIndex];
-    if (!current) {
-      if (rememberPlayed) markPlayed(args.playbackKey);
-      setState((v) => ({ ...v, phase: 'complete' }));
-      return;
-    }
+    if (!current) return;
     if (state.phase === 'typing') {
-      if (state.visibleCharacters >= current.body.length) {
-        setState((v) => ({ ...v, phase: 'waiting' }));
-        return;
-      }
+      if (state.visibleCharacters >= current.body.length) return;
       const timer = window.setTimeout(
         () =>
           setState((v) => ({
@@ -146,7 +172,7 @@ export function useNarrativePlayback(args: {
     setState({
       phase: 'complete',
       messageIndex: Math.max(0, messages.length - 1),
-      visibleCharacters: messages.at(-1)?.body.length ?? 0,
+      visibleCharacters: messages[messages.length - 1]?.body.length ?? 0,
     });
   }, [args.playbackKey, messages, rememberPlayed]);
 

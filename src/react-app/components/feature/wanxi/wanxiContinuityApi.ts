@@ -13,7 +13,9 @@ async function readError(response: Response): Promise<never> {
   try {
     const payload = (await response.json()) as { error?: string; message?: string };
     message = payload.message || payload.error || message;
-  } catch {}
+  } catch {
+    /* ignore malformed error payload */
+  }
   throw new Error(message);
 }
 

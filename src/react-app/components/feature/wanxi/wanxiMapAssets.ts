@@ -69,7 +69,8 @@ export const WANXI_MAP_TILE_LEVELS: readonly WanxiMapTileLevel[] = [
   }))
   .sort((left, right) => left.ratio - right.ratio);
 
-const highestGeneratedRatio = WANXI_MAP_TILE_LEVELS.at(-1)?.ratio ?? 1;
+const highestGeneratedRatio =
+  WANXI_MAP_TILE_LEVELS[WANXI_MAP_TILE_LEVELS.length - 1]?.ratio ?? 1;
 
 // Protect the 1x source from excessive interpolation. A true 2x LOD unlocks
 // a slightly wider zoom range without changing scene coordinates.

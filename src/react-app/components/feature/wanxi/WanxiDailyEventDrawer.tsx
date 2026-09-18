@@ -6,7 +6,7 @@ import {
   type WanxiDailyEventNarrativeResult,
   type WanxiDailyEventResolutionResult,
 } from '@shared/engine/wanxi';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { WanxiNarrativeControls } from './narrative/WanxiNarrativeControls';
 import { WanxiNarrativeLines } from './narrative/WanxiNarrativeLines';
 import { useNarrativePlayback } from './narrative/useNarrativePlayback';
@@ -24,12 +24,14 @@ export function WanxiDailyEventDrawer(props: {
     useState<WanxiDailyEventResolutionResult | null>(null);
   const [resolvingChoiceId, setResolvingChoiceId] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
-
-  useEffect(() => {
+  const narrativeKey = `${narrative?.dateKey ?? ''}:${narrative?.event.id ?? ''}`;
+  const [appliedNarrativeKey, setAppliedNarrativeKey] = useState(narrativeKey);
+  if (appliedNarrativeKey !== narrativeKey) {
+    setAppliedNarrativeKey(narrativeKey);
     setResolution(null);
     setResolvingChoiceId(null);
     setResolveError(null);
-  }, [narrative?.dateKey, narrative?.event.id]);
+  }
 
   const choices = useMemo(
     () => (narrative ? getWanxiDailyEventChoices(narrative.event.id) : []),

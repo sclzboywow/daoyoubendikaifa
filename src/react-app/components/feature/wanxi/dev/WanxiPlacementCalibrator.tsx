@@ -298,6 +298,13 @@ export function WanxiPlacementCalibrator() {
   const [draggingNpc, setDraggingNpc] = useState<DraggingNpc | null>(null);
   const [drawingZone, setDrawingZone] = useState<DrawingZone | null>(null);
   const [status, setStatus] = useState('正在读取数据库中的地图配置……');
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  function syncHistoryFlags() {
+    setCanUndo(historyRef.current.length > 0);
+    setCanRedo(redoRef.current.length > 0);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -451,6 +458,7 @@ export function WanxiPlacementCalibrator() {
       scheduleSave(next);
       return next;
     });
+    syncHistoryFlags();
     if (message) setStatus(message);
   }
 
@@ -461,6 +469,7 @@ export function WanxiPlacementCalibrator() {
     redoRef.current.push(cloneDraft(draft));
     setDraft(previous);
     scheduleSave(previous);
+    syncHistoryFlags();
     setStatus('已撤销上一步。');
   }
 
@@ -471,6 +480,7 @@ export function WanxiPlacementCalibrator() {
     historyRef.current.push(cloneDraft(draft));
     setDraft(next);
     scheduleSave(next);
+    syncHistoryFlags();
     setStatus('已恢复一步。');
   }
 
@@ -773,7 +783,6 @@ export function WanxiPlacementCalibrator() {
     );
   }
 
-  const drawingPath = drawingZone ? polygonPath(drawingZone.points) : '';
   const errorCount = issues.filter((issue) => issue.level === 'error').length;
   const warningCount = issues.filter(
     (issue) => issue.level === 'warning',
@@ -809,10 +818,10 @@ export function WanxiPlacementCalibrator() {
           <InkButton variant="primary" disabled={saving} onClick={() => void persist(draft)}>
             立即保存
           </InkButton>
-          <InkButton variant="ghost" disabled={!historyRef.current.length} onClick={undo}>
+          <InkButton variant="ghost" disabled={!canUndo} onClick={undo}>
             撤销
           </InkButton>
-          <InkButton variant="ghost" disabled={!redoRef.current.length} onClick={redo}>
+          <InkButton variant="ghost" disabled={!canRedo} onClick={redo}>
             重做
           </InkButton>
           <InkButton href="/game/wanxi">查看正式万戏坊</InkButton>

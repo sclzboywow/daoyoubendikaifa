@@ -125,13 +125,17 @@ export function assessWanxiStoryCombatReadiness(
       cultivator.equipped?.weapon,
       cultivator.equipped?.armor,
       cultivator.equipped?.accessory,
-    ].filter(Boolean),
+    ].filter((id): id is string => Boolean(id)),
   );
   const equippedArtifactCount = (cultivator.inventory?.artifacts ?? []).filter(
-    (artifact) =>
-      Boolean(artifact.id) &&
-      equippedIds.has(artifact.id) &&
-      Boolean(artifact.abilityConfig),
+    (artifact) => {
+      const artifactId = artifact.id;
+      return (
+        typeof artifactId === 'string' &&
+        equippedIds.has(artifactId) &&
+        Boolean(artifact.abilityConfig)
+      );
+    },
   ).length;
   const hasSectCombat = Boolean(cultivator.sect);
   const noviceEquipment = getNoviceEquipmentState(cultivator);
@@ -210,7 +214,7 @@ export function applyWanxiStoryBattleLoadout(
     ...cultivator,
     skills: [],
     cultivations: [],
-    sect: null,
+    sect: undefined,
     inventory: { ...cultivator.inventory, artifacts: [] },
     equipped: { weapon: null, armor: null, accessory: null },
   };

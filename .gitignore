@@ -209,3 +209,6 @@ sponsorkit/.cache*.json
 sponsorkit/sponsors.json
 
 .venv*
+
+.tmp-*
+**/*.bak

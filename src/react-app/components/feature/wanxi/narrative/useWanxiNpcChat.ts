@@ -7,7 +7,18 @@ export function useWanxiNpcChat(args: { roleKey: WanxiLampChatRoleKey; npcName: 
   const [messages, setMessages] = useState<WanxiNpcChatDisplayMessage[]>(() => args.enabled ? [...(sessions.get(args.roleKey) ?? [])] : []);
   const [draft, setDraft] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState<string>();
   const controllerRef = useRef<AbortController | null>(null);
-  useEffect(() => { controllerRef.current?.abort(); setBusy(false); setError(undefined); setDraft(''); setMessages(args.enabled ? [...(sessions.get(args.roleKey) ?? [])] : []); }, [args.enabled, args.roleKey]);
+  const sessionKey = `${args.enabled}:${args.roleKey}`;
+  const [appliedSession, setAppliedSession] = useState(sessionKey);
+  if (appliedSession !== sessionKey) {
+    setAppliedSession(sessionKey);
+    setBusy(false);
+    setError(undefined);
+    setDraft('');
+    setMessages(args.enabled ? [...(sessions.get(args.roleKey) ?? [])] : []);
+  }
+  useEffect(() => {
+    controllerRef.current?.abort();
+  }, [sessionKey]);
   useEffect(() => () => controllerRef.current?.abort(), []);
   const update = useCallback((fn: (c: WanxiNpcChatDisplayMessage[]) => WanxiNpcChatDisplayMessage[]) => setMessages((c) => { const n=fn(c); sessions.set(args.roleKey,n); return n; }), [args.roleKey]);
   const send = useCallback(async () => {

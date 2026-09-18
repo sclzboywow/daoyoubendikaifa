@@ -21,18 +21,35 @@ export function useWanxiLampNarrative(args: { story?: WanxiLampStorySnapshot | n
     return m ? m.map((x) => ({ ...x })) : null;
   }, [args.story, key, target]);
   const shouldGenerate = Boolean(args.story && shouldUseWanxiLampAiNarrative(args.story.stage, target));
-  const [state, setState] = useState({ key, loading: false, generated: false, messages: canonical as WanxiLampStoryMessage[] | null });
+  const cached = cache.get(key);
+  const [state, setState] = useState({
+    key,
+    loading: false,
+    generated: false,
+    messages: canonical as WanxiLampStoryMessage[] | null,
+  });
+  if (state.key !== key) {
+    if (!args.story || !canonical || !shouldGenerate) {
+      setState({ key, loading: false, generated: false, messages: canonical });
+    } else if (cached) {
+      setState({ key, loading: false, ...cached });
+    } else {
+      setState({ key, loading: true, generated: false, messages: canonical });
+    }
+  }
   useEffect(() => {
-    if (!args.story || !canonical || !shouldGenerate) { setState({ key, loading: false, generated: false, messages: canonical }); return; }
-    const cached = cache.get(key);
-    if (cached) { setState({ key, loading: false, ...cached }); return; }
+    if (!args.story || !canonical || !shouldGenerate || cache.has(key)) return;
     const controller = new AbortController();
-    setState({ key, loading: true, generated: false, messages: canonical });
     void fetchWanxiLampNarrative(target, controller.signal).then((r) => {
       if (controller.signal.aborted) return;
       const next = { generated: r.generated, messages: r.messages };
-      cache.set(key, next); setState({ key, loading: false, ...next });
-    }).catch(() => { if (!controller.signal.aborted) setState({ key, loading: false, generated: false, messages: canonical }); });
+      cache.set(key, next);
+      setState({ key, loading: false, ...next });
+    }).catch(() => {
+      if (!controller.signal.aborted) {
+        setState({ key, loading: false, generated: false, messages: canonical });
+      }
+    });
     return () => controller.abort();
   }, [args.story, canonical, key, shouldGenerate, target]);
   return state;
