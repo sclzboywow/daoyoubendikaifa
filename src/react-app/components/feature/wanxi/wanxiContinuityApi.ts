@@ -1,6 +1,7 @@
 import type {
   WanxiDailyEventCompleteResponse,
   WanxiDailyEventNarrativeResponse,
+  WanxiDailyEventResolveResponse,
 } from '@shared/contracts/wanxiContinuity';
 import type {
   WanxiContinuitySnapshot,
@@ -31,6 +32,21 @@ export async function fetchWanxiDailyEventNarrative(
   return payload.data;
 }
 
+export async function resolveWanxiDailyEvent(
+  eventId: string,
+  choiceId: string,
+): Promise<WanxiDailyEventResolveResponse['data']> {
+  const response = await fetch('/api/wanxi/continuity/event/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ eventId, choiceId }),
+  });
+  if (!response.ok) return readError(response);
+  const payload = (await response.json()) as WanxiDailyEventResolveResponse;
+  return payload.data;
+}
+
+/** @deprecated Kept only for stale clients; Interactive Event V2 uses resolveWanxiDailyEvent. */
 export async function completeWanxiDailyEvent(
   eventId: string,
 ): Promise<WanxiContinuitySnapshot> {

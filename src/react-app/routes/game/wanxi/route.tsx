@@ -15,8 +15,8 @@ import { useInkUI } from '@app/components/providers/InkUIProvider';
 import { InkButton } from '@app/components/ui/InkButton';
 import { useResourceMutation } from '@app/lib/resources/mutations';
 import {
-  completeWanxiDailyEvent,
   fetchWanxiDailyEventNarrative,
+  resolveWanxiDailyEvent,
 } from '@app/components/feature/wanxi/wanxiContinuityApi';
 import {
   getWanxiLampStoryActionPresentation,
@@ -157,22 +157,11 @@ export default function WanxiPage() {
     }
   };
 
-  const finishDailyEvent = async (eventId: string) => {
-    setActing(true);
-    try {
-      await completeWanxiDailyEvent(eventId);
-      setDailyNarrative(null);
-      continuityQuery.reload();
-      query.reload();
-      pushToast({ message: '这一刻已经记进万戏坊纪事。', tone: 'success' });
-    } catch (error) {
-      pushToast({
-        message: error instanceof Error ? error.message : '这件见闻暂时无法记下',
-        tone: 'warning',
-      });
-    } finally {
-      setActing(false);
-    }
+  const resolveDailyEvent = async (eventId: string, choiceId: string) => {
+    const result = await resolveWanxiDailyEvent(eventId, choiceId);
+    continuityQuery.reload();
+    query.reload();
+    return result.resolution;
   };
 
   const runActivity = async (bindingId: string) => {
@@ -333,9 +322,8 @@ export default function WanxiPage() {
 
       <WanxiDailyEventDrawer
         narrative={dailyNarrative}
-        busy={acting}
         onClose={() => setDailyNarrative(null)}
-        onComplete={(eventId) => void finishDailyEvent(eventId)}
+        onResolve={resolveDailyEvent}
       />
     </div>
   );

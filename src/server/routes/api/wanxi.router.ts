@@ -12,7 +12,10 @@ import {
   completeWanxiDailyEventAndRemember,
   getWanxiContinuitySnapshot,
 } from '@server/lib/services/wanxi/WanxiContinuityService';
-import { getWanxiDailyEventNarrative } from '@server/lib/services/wanxi/WanxiDailyNarrativeService';
+import {
+  getWanxiDailyEventNarrative,
+  getWanxiDailyEventResolutionNarrative,
+} from '@server/lib/services/wanxi/WanxiDailyNarrativeService';
 import {
   executeWanxiLampStoryAction,
   executeWanxiLampStoryBattle,
@@ -26,7 +29,9 @@ import {
 import { resolveWanxiSceneRuntimeSnapshot } from '@server/lib/services/wanxi/WanxiSceneService';
 import {
   WanxiDailyEventRequestSchema,
+  WanxiDailyEventResolveRequestSchema,
   type WanxiDailyEventRequest,
+  type WanxiDailyEventResolveRequest,
 } from '@shared/contracts/wanxiContinuity';
 import {
   WanxiLampChatRoleSchema,
@@ -107,23 +112,49 @@ router.post(
   },
 );
 
+
+router.post(
+  '/continuity/event/resolve',
+  validateJson(WanxiDailyEventResolveRequestSchema),
+  async (c) => {
+    try {
+      const active = actor(c);
+      const input = getValidatedJson<WanxiDailyEventResolveRequest>(c);
+      const resolution = await getWanxiDailyEventResolutionNarrative({
+        cultivatorId: active.cultivatorId,
+        eventId: input.eventId,
+        choiceId: input.choiceId,
+      });
+      const committed = await completeWanxiDailyEventAndRemember({
+        userId: active.userId,
+        cultivatorId: active.cultivatorId,
+        eventId: input.eventId,
+        choiceId: input.choiceId,
+      });
+      const response = toPlayerStateMutationResponse(committed);
+      return c.json({
+        success: true,
+        data: {
+          continuity: response.data.continuity,
+          resolution,
+        },
+      });
+    } catch (error) {
+      return errorResponse(c, error);
+    }
+  },
+);
+
 router.post(
   '/continuity/event/complete',
   validateJson(WanxiDailyEventRequestSchema),
   async (c) => {
     try {
-      const active = actor(c);
-      const input = getValidatedJson<WanxiDailyEventRequest>(c);
-      const committed = await completeWanxiDailyEventAndRemember({
-        userId: active.userId,
-        cultivatorId: active.cultivatorId,
-        eventId: input.eventId,
-      });
-      const response = toPlayerStateMutationResponse(committed);
-      return c.json({
-        success: true,
-        data: response.data.continuity,
-      });
+      actor(c);
+      throw new WanxiLampStoryError(
+        '新版坊中见闻需要先选一句回应，不能再直接记为完成',
+        409,
+      );
     } catch (error) {
       return errorResponse(c, error);
     }

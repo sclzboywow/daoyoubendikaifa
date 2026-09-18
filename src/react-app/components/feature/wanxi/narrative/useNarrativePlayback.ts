@@ -49,8 +49,10 @@ export function useNarrativePlayback(args: {
   playbackKey: string;
   messages?: readonly WanxiLampStoryMessage[] | null;
   enabled?: boolean;
+  rememberPlayed?: boolean;
 }) {
   const enabled = args.enabled ?? true;
+  const rememberPlayed = args.rememberPlayed ?? true;
   const messages = args.messages ?? EMPTY_MESSAGES;
   const [state, setState] = useState<PlaybackState>({
     phase: 'idle',
@@ -66,7 +68,10 @@ export function useNarrativePlayback(args: {
         messageIndex: 0,
         visibleCharacters: 0,
       };
-    } else if (reducedMotion() || played(args.playbackKey)) {
+    } else if (
+      reducedMotion() ||
+      (rememberPlayed && played(args.playbackKey))
+    ) {
       next = {
         phase: 'complete',
         messageIndex: messages.length - 1,
@@ -76,13 +81,13 @@ export function useNarrativePlayback(args: {
       next = { phase: 'typing', messageIndex: 0, visibleCharacters: 0 };
     }
     setState((current) => (samePlaybackState(current, next) ? current : next));
-  }, [args.playbackKey, enabled, messages]);
+  }, [args.playbackKey, enabled, messages, rememberPlayed]);
 
   useEffect(() => {
     if (!enabled || state.phase === 'idle' || state.phase === 'complete') return;
     const current = messages[state.messageIndex];
     if (!current) {
-      markPlayed(args.playbackKey);
+      if (rememberPlayed) markPlayed(args.playbackKey);
       setState((v) => ({ ...v, phase: 'complete' }));
       return;
     }
@@ -103,7 +108,7 @@ export function useNarrativePlayback(args: {
     }
     const timer = window.setTimeout(() => {
       if (state.messageIndex >= messages.length - 1) {
-        markPlayed(args.playbackKey);
+        if (rememberPlayed) markPlayed(args.playbackKey);
         setState((v) => ({ ...v, phase: 'complete' }));
       } else {
         setState({
@@ -114,7 +119,7 @@ export function useNarrativePlayback(args: {
       }
     }, current.pauseAfterMs ?? 360);
     return () => window.clearTimeout(timer);
-  }, [args.playbackKey, enabled, messages, state]);
+  }, [args.playbackKey, enabled, messages, rememberPlayed, state]);
 
   const revealCurrent = useCallback(() => {
     if (state.phase === 'typing') {
@@ -124,7 +129,7 @@ export function useNarrativePlayback(args: {
       }
     } else if (state.phase === 'waiting') {
       if (state.messageIndex >= messages.length - 1) {
-        markPlayed(args.playbackKey);
+        if (rememberPlayed) markPlayed(args.playbackKey);
         setState((v) => ({ ...v, phase: 'complete' }));
       } else {
         setState({
@@ -134,16 +139,16 @@ export function useNarrativePlayback(args: {
         });
       }
     }
-  }, [args.playbackKey, messages, state]);
+  }, [args.playbackKey, messages, rememberPlayed, state]);
 
   const skipAll = useCallback(() => {
-    markPlayed(args.playbackKey);
+    if (rememberPlayed) markPlayed(args.playbackKey);
     setState({
       phase: 'complete',
       messageIndex: Math.max(0, messages.length - 1),
       visibleCharacters: messages.at(-1)?.body.length ?? 0,
     });
-  }, [args.playbackKey, messages]);
+  }, [args.playbackKey, messages, rememberPlayed]);
 
   const visibleMessages = useMemo(() => {
     if (state.phase === 'idle') return [];

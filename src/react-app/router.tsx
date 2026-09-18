@@ -994,6 +994,22 @@ export const router = createBrowserRouter(
                 '万戏坊',
               )}
             />
+            {/* WANXI_MAP_CALIBRATOR_V1: local development placement tool */}
+            <Route
+              path="wanxi/dev/placement"
+              lazy={lazyRoute(
+                () => import('@app/routes/game/wanxi/dev/placement/route'),
+              )}
+              handle={scene(
+                {
+                  id: 'wanxi',
+                  chrome: 'immersive',
+                  dock: 'hidden',
+                  summary: '按原图像素精确校准万戏坊 NPC 站位与可站区域。',
+                },
+                '万戏坊定位校准器',
+              )}
+            />
           </Route>
 
           <Route element={<GameActivityLayout />}>

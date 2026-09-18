@@ -10,8 +10,10 @@ import {
 import { findWanxiStoryProgress } from '@server/lib/repositories/wanxiStoryRepository';
 import { playerCommandExecutor } from '@server/lib/services/CommandExecutors';
 import {
+  describeWanxiInteractiveMemoryTag,
   describeWanxiMemoryTag,
   getWanxiDailyDateKey,
+  getWanxiDailyEventChoice,
   getWanxiDailyEventDefinition,
   getWanxiLocation,
   getWanxiNpcByRoleKey,
@@ -46,7 +48,9 @@ function relationshipSnapshot(args: {
     npcName: npc?.name ?? args.roleKey,
     stage: stage.stage,
     stageLabel: stage.label,
-    memoryNotes: args.memoryTags.map(describeWanxiMemoryTag),
+    memoryNotes: args.memoryTags.map(
+      (tag) => describeWanxiInteractiveMemoryTag(tag) ?? describeWanxiMemoryTag(tag),
+    ),
     ...(args.lastInteractionAt
       ? { lastInteractionAt: args.lastInteractionAt.toISOString() }
       : {}),
@@ -206,6 +210,7 @@ export async function completeWanxiDailyEventAndRemember(args: {
   userId: string;
   cultivatorId: string;
   eventId: string;
+  choiceId: string;
 }) {
   return playerCommandExecutor.executeWithLock({
     userId: args.userId,
@@ -218,6 +223,10 @@ export async function completeWanxiDailyEventAndRemember(args: {
         eventId: args.eventId,
         executor: tx,
       });
+      const choice = getWanxiDailyEventChoice(event.id, args.choiceId);
+      if (!choice) {
+        throw new WanxiLampStoryError('这句话和眼前这件事对不上', 400);
+      }
       const current = await findWanxiNpcRelationship(
         args.cultivatorId,
         event.roleKey,
@@ -225,7 +234,7 @@ export async function completeWanxiDailyEventAndRemember(args: {
       );
       const base = baseRelationship(event.roleKey);
       const memoryTags = [
-        ...new Set([...(current?.memoryTags ?? base.memoryTags), event.memoryTag]),
+        ...new Set([...(current?.memoryTags ?? base.memoryTags), choice.memoryTag]),
       ];
       await saveWanxiNpcRelationship(
         {
