@@ -1,4 +1,4 @@
-import wanxiMapUrl from '@app/assets/wanxi/wanxi-map-v1.png';
+import { WANXI_SINGLE_MAP_URL } from '../wanxiMapAssets';
 import { InkButton } from '@app/components/ui/InkButton';
 import { InkInput } from '@app/components/ui/InkInput';
 import { InkSelect } from '@app/components/ui/InkSelect';
@@ -1024,7 +1024,7 @@ export function WanxiPlacementCalibrator() {
               style={{
                 width: MAP_WIDTH * zoom,
                 height: MAP_HEIGHT * zoom,
-                backgroundImage: `url(${wanxiMapUrl})`,
+                backgroundImage: `url(${WANXI_SINGLE_MAP_URL})`,
                 backgroundSize: '100% 100%',
               }}
             >

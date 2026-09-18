@@ -1,0 +1,38 @@
+{
+  "logicalSize": {
+    "width": 3056,
+    "height": 2143
+  },
+  "quality": 92,
+  "levels": [
+    {
+      "ratio": 0.5,
+      "rasterWidth": 1528,
+      "rasterHeight": 1072,
+      "tileSize": 512,
+      "cols": 3,
+      "rows": 3
+    },
+    {
+      "ratio": 1.0,
+      "rasterWidth": 3056,
+      "rasterHeight": 2143,
+      "tileSize": 512,
+      "cols": 6,
+      "rows": 5
+    },
+    {
+      "ratio": 2.0,
+      "rasterWidth": 6112,
+      "rasterHeight": 4286,
+      "tileSize": 512,
+      "cols": 12,
+      "rows": 9
+    }
+  ],
+  "notes": [
+    "Runtime discovers generated tiles with Vite import.meta.glob.",
+    "Restart the Vite dev server after adding or removing LOD files.",
+    "2x LOD is generated only from a true 6112x4286 source."
+  ]
+}

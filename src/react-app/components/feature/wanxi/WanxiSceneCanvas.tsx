@@ -1,4 +1,8 @@
-import wanxiMapUrl from '@app/assets/wanxi/wanxi-map-v1.png';
+import {
+  WanxiMapBackground,
+  WANXI_MAP_MAX_SCALE,
+  WANXI_MAP_MIN_SCALE,
+} from './WanxiMapBackground';
 import {
   getWanxiLocation,
   getWanxiNpcById,
@@ -430,8 +434,8 @@ export function WanxiSceneCanvas({
       <TransformWrapper
         key={transformKey}
         initialScale={transform.scale}
-        minScale={0.42}
-        maxScale={3.5}
+        minScale={WANXI_MAP_MIN_SCALE}
+        maxScale={WANXI_MAP_MAX_SCALE}
         limitToBounds={false}
         initialPositionX={transform.x}
         initialPositionY={transform.y}
@@ -448,13 +452,7 @@ export function WanxiSceneCanvas({
             className="relative isolate overflow-hidden bg-[#e8e0cf]"
             style={{ width: `${MAP_WIDTH}px`, height: `${MAP_HEIGHT}px` }}
           >
-            <img
-              src={wanxiMapUrl}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="pointer-events-none absolute inset-0 h-full w-full select-none object-fill"
-            />
+            <WanxiMapBackground mapScale={mapScale} />
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(248,243,230,0.025),rgba(248,243,230,0.08))]" />
 
             {WANXI_MAIN_SCENE.labels.map((label) => (
